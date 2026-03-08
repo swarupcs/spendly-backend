@@ -68,14 +68,14 @@ export async function getBudgetOverviewService(
     }),
     prisma.expense.findMany({
       where: { userId, date: { gte: from, lte: to } },
-      select: { category: true, amount: true },
+      select: { category: true, convertedAmount: true },
     }),
   ]);
 
-  // Aggregate spending per category
+  // Aggregate spending per category (using home-currency converted amounts)
   const spentByCategory: Partial<Record<Category, number>> = {};
   for (const exp of expenses) {
-    spentByCategory[exp.category] = (spentByCategory[exp.category] ?? 0) + exp.amount;
+    spentByCategory[exp.category] = (spentByCategory[exp.category] ?? 0) + exp.convertedAmount;
   }
 
   return budgets.map((b) => {

@@ -60,8 +60,8 @@ export async function getGoalsService(userId: number): Promise<GoalWithProgress[
           date: { gte: from, lte: to },
         };
         if (goal.category) where.category = goal.category;
-        const agg = await prisma.expense.aggregate({ where, _sum: { amount: true } });
-        spendMap.set(key, Math.round((agg._sum.amount ?? 0) * 100) / 100);
+        const agg = await prisma.expense.aggregate({ where, _sum: { convertedAmount: true } });
+        spendMap.set(key, Math.round((agg._sum.convertedAmount ?? 0) * 100) / 100);
       }),
   );
 

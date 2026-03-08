@@ -74,30 +74,30 @@ export async function getStatsService(
   const [aggregate, byCategory] = await Promise.all([
     prisma.expense.aggregate({
       where,
-      _sum: { amount: true },
+      _sum: { convertedAmount: true },
       _count: true,
-      _avg: { amount: true },
-      _max: { amount: true },
-      _min: { amount: true },
+      _avg: { convertedAmount: true },
+      _max: { convertedAmount: true },
+      _min: { convertedAmount: true },
     }),
     prisma.expense.groupBy({
       by: ['category'],
       where,
-      _sum: { amount: true },
+      _sum: { convertedAmount: true },
       _count: true,
-      orderBy: { _sum: { amount: 'desc' } },
+      orderBy: { _sum: { convertedAmount: 'desc' } },
     }),
   ]);
 
   return {
-    total: aggregate._sum.amount ?? 0,
+    total: aggregate._sum.convertedAmount ?? 0,
     count: aggregate._count,
-    average: aggregate._avg.amount ?? 0,
-    max: aggregate._max.amount ?? 0,
-    min: aggregate._min.amount ?? 0,
+    average: aggregate._avg.convertedAmount ?? 0,
+    max: aggregate._max.convertedAmount ?? 0,
+    min: aggregate._min.convertedAmount ?? 0,
     byCategory: byCategory.map((c) => ({
       category: c.category,
-      amount: c._sum.amount ?? 0,
+      amount: c._sum.convertedAmount ?? 0,
       count: c._count,
     })),
   };
@@ -136,11 +136,17 @@ export async function createExpenseService(
   input: CreateExpenseInput,
 ) {
   const { title, amount, category, date, notes } = input;
+  const currency = input.currency ?? 'INR';
+  const exchangeRate = input.exchangeRate ?? 1.0;
+  const convertedAmount = Math.round(amount * exchangeRate * 100) / 100;
 
   return prisma.expense.create({
     data: {
       title,
       amount,
+      currency,
+      exchangeRate,
+      convertedAmount,
       category: (category as Category) ?? 'OTHER',
       date: date ?? new Date().toISOString().split('T')[0],
       notes,
@@ -160,12 +166,17 @@ export async function updateExpenseService(
   if (!existing) throw new AppError(404, 'Expense not found');
 
   const { title, amount, category, date, notes } = input;
+  const newAmount = amount ?? existing.amount;
+  const newRate = input.exchangeRate ?? existing.exchangeRate;
 
   return prisma.expense.update({
     where: { id },
     data: {
       ...(title !== undefined && { title }),
       ...(amount !== undefined && { amount }),
+      ...(input.currency !== undefined && { currency: input.currency }),
+      ...(input.exchangeRate !== undefined && { exchangeRate: input.exchangeRate }),
+      convertedAmount: Math.round(newAmount * newRate * 100) / 100,
       ...(category !== undefined && { category: category as Category }),
       ...(date !== undefined && { date }),
       ...(notes !== undefined && { notes }),

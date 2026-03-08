@@ -50,6 +50,7 @@ model UserSettings {
   budgetAlerts        Boolean  @default(true)
   weeklyReport        Boolean  @default(false)
   onboardingCompleted Boolean  @default(false)
+  currency            String   @default("INR")
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -72,16 +73,19 @@ model RefreshToken {
 }
 
 model Expense {
-  id        Int      @id @default(autoincrement())
-  title     String
-  amount    Float
-  category  Category @default(OTHER)
-  date      String
-  notes     String?
-  userId    Int
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id               Int      @id @default(autoincrement())
+  title            String
+  amount           Float
+  currency         String   @default("INR")
+  exchangeRate     Float    @default(1.0)
+  convertedAmount  Float    @default(0)
+  category         Category @default(OTHER)
+  date             String
+  notes            String?
+  userId           Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([userId, date])

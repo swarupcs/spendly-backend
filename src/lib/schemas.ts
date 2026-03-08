@@ -55,6 +55,8 @@ export const createExpenseSchema = z.object({
     .number({ error: 'Amount must be a number' })
     .positive('Amount must be positive')
     .max(10_000_000, 'Amount too large'),
+  currency: z.string().min(3).max(3).optional(),
+  exchangeRate: z.number().positive().optional(),
   category: z.enum(categoryValues).optional(),
   date: z
     .string()
@@ -66,6 +68,8 @@ export const createExpenseSchema = z.object({
 export const updateExpenseSchema = z.object({
   title: z.string().min(1).max(200).trim().optional(),
   amount: z.number().positive().max(10_000_000).optional(),
+  currency: z.string().min(3).max(3).optional(),
+  exchangeRate: z.number().positive().optional(),
   category: z.enum(categoryValues).optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional(),
   notes: z.string().max(1000).optional(),
@@ -144,6 +148,7 @@ export const updateUserSettingsSchema = z.object({
   budgetAlerts: z.boolean().optional(),
   weeklyReport: z.boolean().optional(),
   onboardingCompleted: z.boolean().optional(),
+  currency: z.string().min(3).max(3).optional(),
 });
 
 // ─── Recurring Expense Schemas ────────────────────────────────────────────────
