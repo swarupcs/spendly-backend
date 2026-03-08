@@ -56,6 +56,10 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
   RATE_LIMIT_MAX: z.coerce.number().default(100),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().default(10),
+
+  // ── Email (Resend) ────────────────────────────────────────────────────────
+  RESEND_API_KEY: z.string().min(1, 'RESEND_API_KEY is required'),
+  EMAIL_FROM: z.string().default('ExpenseAI <noreply@expenseai.app>'),
 });
 
 // ─── Cross-field validation ───────────────────────────────────────────────────

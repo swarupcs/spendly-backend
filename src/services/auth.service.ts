@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { prisma } from '../config/db';
 import { hashPassword, comparePassword } from '../lib/hash';
 import {
@@ -7,11 +8,19 @@ import {
 } from '../lib/jwt';
 import { AppError } from '../middleware/errorHandler';
 import { getGoogleUserInfo, verifyGoogleToken } from '../lib/google-oauth';
+import {
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+} from '../lib/email';
 import type {
   SignUpInput,
   SignInInput,
   ChangePasswordInput,
   GoogleAuthInput,
+  ForgotPasswordInput,
+  ResetPasswordInput,
+  VerifyEmailInput,
+  ResendVerificationInput,
 } from '../lib/schemas';
 import type { PublicUser, TokenPair } from '../types/index';
 
@@ -39,9 +48,18 @@ export async function signUpService(input: SignUpInput): Promise<AuthResult> {
 
   const passwordHash = await hashPassword(password);
 
+  const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+  const emailVerificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+
   const user = await prisma.user.create({
-    data: { name, email, passwordHash },
-    select: { id: true, name: true, email: true, role: true, createdAt: true },
+    data: {
+      name,
+      email,
+      passwordHash,
+      emailVerificationToken,
+      emailVerificationTokenExpiry,
+    },
+    select: { id: true, name: true, email: true, role: true, createdAt: true, emailVerified: true },
   });
 
   const tokens = generateTokenPair(user.id, user.email, user.role);
@@ -53,6 +71,9 @@ export async function signUpService(input: SignUpInput): Promise<AuthResult> {
       expiresAt: getRefreshTokenExpiry(),
     },
   });
+
+  // Fire-and-forget — don't block signup if email fails
+  sendVerificationEmail(user.email, user.name, emailVerificationToken).catch(console.error);
 
   return { user, tokens };
 }
@@ -440,6 +461,133 @@ export async function changePasswordService(
       where: { id: user.id },
       data: { passwordHash: newHash },
     }),
+    prisma.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    }),
+  ]);
+}
+
+// ─── Verify Email ─────────────────────────────────────────────────────────────
+
+export async function verifyEmailService(input: VerifyEmailInput): Promise<void> {
+  const { token } = input;
+
+  const user = await prisma.user.findUnique({
+    where: { emailVerificationToken: token },
+    select: {
+      id: true,
+      emailVerified: true,
+      emailVerificationTokenExpiry: true,
+    },
+  });
+
+  if (!user) {
+    throw new AppError(400, 'Invalid or expired verification link');
+  }
+
+  if (user.emailVerified) {
+    return; // Already verified — idempotent
+  }
+
+  if (!user.emailVerificationTokenExpiry || user.emailVerificationTokenExpiry < new Date()) {
+    throw new AppError(400, 'Verification link has expired. Please request a new one.');
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      emailVerified: true,
+      emailVerificationToken: null,
+      emailVerificationTokenExpiry: null,
+    },
+  });
+}
+
+// ─── Resend Verification Email ────────────────────────────────────────────────
+
+export async function resendVerificationService(input: ResendVerificationInput): Promise<void> {
+  const { email } = input;
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, name: true, email: true, emailVerified: true, isActive: true },
+  });
+
+  // Always return success to prevent user enumeration
+  if (!user || !user.isActive || user.emailVerified) return;
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { emailVerificationToken: token, emailVerificationTokenExpiry: expiry },
+  });
+
+  sendVerificationEmail(user.email, user.name, token).catch(console.error);
+}
+
+// ─── Forgot Password ──────────────────────────────────────────────────────────
+
+export async function forgotPasswordService(input: ForgotPasswordInput): Promise<void> {
+  const { email } = input;
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, name: true, email: true, isActive: true, authProvider: true },
+  });
+
+  // Always return success — prevent user enumeration
+  if (!user || !user.isActive) return;
+
+  // Google-only accounts have no password
+  if (user.authProvider === 'google') return;
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordResetToken: token, passwordResetTokenExpiry: expiry },
+  });
+
+  sendPasswordResetEmail(user.email, user.name, token).catch(console.error);
+}
+
+// ─── Reset Password ───────────────────────────────────────────────────────────
+
+export async function resetPasswordService(input: ResetPasswordInput): Promise<void> {
+  const { token, newPassword } = input;
+
+  const user = await prisma.user.findUnique({
+    where: { passwordResetToken: token },
+    select: {
+      id: true,
+      passwordResetTokenExpiry: true,
+    },
+  });
+
+  if (!user) {
+    throw new AppError(400, 'Invalid or expired reset link');
+  }
+
+  if (!user.passwordResetTokenExpiry || user.passwordResetTokenExpiry < new Date()) {
+    throw new AppError(400, 'Reset link has expired. Please request a new one.');
+  }
+
+  const newHash = await hashPassword(newPassword);
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newHash,
+        passwordResetToken: null,
+        passwordResetTokenExpiry: null,
+      },
+    }),
+    // Revoke all sessions — forces re-login everywhere
     prisma.refreshToken.updateMany({
       where: { userId: user.id, revokedAt: null },
       data: { revokedAt: new Date() },

@@ -8,6 +8,10 @@ import {
   refreshTokenSchema,
   changePasswordSchema,
   googleAuthSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  verifyEmailSchema,
+  resendVerificationSchema,
 } from '../lib/schemas';
 import {
   signUp,
@@ -20,6 +24,10 @@ import {
   googleAuthCallbackGet,
   googleAuthCallback,
   googleTokenAuth,
+  forgotPassword,
+  resetPassword,
+  verifyEmail,
+  resendVerification,
 } from '../controllers/auth.controller';
 
 export const authRouter: Router = Router();
@@ -40,6 +48,14 @@ authRouter.post(
   googleAuthCallback,
 );
 authRouter.post('/google/token', authLimiter, googleTokenAuth);
+
+// Password reset (public, rate-limited)
+authRouter.post('/forgot-password', authLimiter, validate(forgotPasswordSchema), forgotPassword);
+authRouter.post('/reset-password', authLimiter, validate(resetPasswordSchema), resetPassword);
+
+// Email verification (public)
+authRouter.post('/verify-email', validate(verifyEmailSchema), verifyEmail);
+authRouter.post('/resend-verification', authLimiter, validate(resendVerificationSchema), resendVerification);
 
 // Protected — requires valid Bearer JWT
 authRouter.get('/me', authenticate, getMe);

@@ -84,6 +84,47 @@ export const bulkDeleteSchema = z.object({
   ids: z.array(z.number().int().positive()).min(1, 'At least one ID required'),
 });
 
+// ─── Password Reset Schemas ───────────────────────────────────────────────────
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().email('Invalid email address').toLowerCase().trim(),
+});
+
+export const resetPasswordSchema = z
+  .object({
+    token: z.string().min(1, 'Reset token is required'),
+    newPassword: z
+      .string()
+      .min(8, 'Password must be at least 8 characters')
+      .max(128)
+      .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+      .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+      .regex(/[0-9]/, 'Must contain at least one number'),
+    confirmPassword: z.string().min(1, 'Please confirm your password'),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
+
+// ─── Email Verification Schemas ───────────────────────────────────────────────
+
+export const verifyEmailSchema = z.object({
+  token: z.string().min(1, 'Verification token is required'),
+});
+
+export const resendVerificationSchema = z.object({
+  email: z.string().email('Invalid email address').toLowerCase().trim(),
+});
+
+// ─── User Settings Schema ─────────────────────────────────────────────────────
+
+export const updateUserSettingsSchema = z.object({
+  emailNotifications: z.boolean().optional(),
+  budgetAlerts: z.boolean().optional(),
+  weeklyReport: z.boolean().optional(),
+});
+
 // ─── Chat Schemas ─────────────────────────────────────────────────────────────
 
 export const chatQuerySchema = z.object({
@@ -115,3 +156,9 @@ export type ChatQueryInput      = z.infer<typeof chatQuerySchema>;
 
 export type GoogleAuthInput = z.infer<typeof googleAuthSchema>;
 export type GoogleCallbackInput = z.infer<typeof googleCallbackSchema>;
+
+export type ForgotPasswordInput    = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordInput     = z.infer<typeof resetPasswordSchema>;
+export type VerifyEmailInput       = z.infer<typeof verifyEmailSchema>;
+export type ResendVerificationInput = z.infer<typeof resendVerificationSchema>;
+export type UpdateUserSettingsInput = z.infer<typeof updateUserSettingsSchema>;

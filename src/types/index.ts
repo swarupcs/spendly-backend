@@ -26,6 +26,7 @@ export interface PublicUser {
   email: string;
   role: Role;
   createdAt: Date;
+  emailVerified?: boolean;
 }
 
 // ─── SSE Streaming ────────────────────────────────────────────────────────────

@@ -7,6 +7,10 @@ import type {
   RefreshTokenInput,
   ChangePasswordInput,
   GoogleAuthInput,
+  ForgotPasswordInput,
+  ResetPasswordInput,
+  VerifyEmailInput,
+  ResendVerificationInput,
 } from '../lib/schemas';
 import {
   signUpService,
@@ -17,6 +21,10 @@ import {
   changePasswordService,
   googleAuthService,
   googleTokenAuthService,
+  forgotPasswordService,
+  resetPasswordService,
+  verifyEmailService,
+  resendVerificationService,
 } from '../services/auth.service';
 
 import { getGoogleAuthUrl } from '../lib/google-oauth';
@@ -178,6 +186,76 @@ export async function changePassword(
     res.json({
       success: true,
       message: 'Password changed. Please sign in again on all devices.',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/auth/forgot-password ──────────────────────────────────────────
+
+export async function forgotPassword(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    await forgotPasswordService(req.body as ForgotPasswordInput);
+    // Always 200 — prevent user enumeration
+    res.json({
+      success: true,
+      message: 'If that email is registered, a reset link has been sent.',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/auth/reset-password ───────────────────────────────────────────
+
+export async function resetPassword(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    await resetPasswordService(req.body as ResetPasswordInput);
+    res.json({
+      success: true,
+      message: 'Password reset successfully. Please sign in with your new password.',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/auth/verify-email ─────────────────────────────────────────────
+
+export async function verifyEmail(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    await verifyEmailService(req.body as VerifyEmailInput);
+    res.json({ success: true, message: 'Email verified successfully.' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/auth/resend-verification ──────────────────────────────────────
+
+export async function resendVerification(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    await resendVerificationService(req.body as ResendVerificationInput);
+    res.json({
+      success: true,
+      message: 'If that email is registered and unverified, a new link has been sent.',
     });
   } catch (err) {
     next(err);
