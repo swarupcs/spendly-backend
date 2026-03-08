@@ -6,6 +6,8 @@ const SETTINGS_SELECT = {
   budgetAlerts: true,
   weeklyReport: true,
   onboardingCompleted: true,
+  currency: true,
+  alertThreshold: true,
 } as const;
 
 // ─── Update Profile ───────────────────────────────────────────────────────────

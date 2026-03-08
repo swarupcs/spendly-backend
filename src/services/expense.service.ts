@@ -8,6 +8,7 @@ import type {
   BulkDeleteInput,
 } from '../lib/schemas';
 import type { ExpenseStats, PaginationMeta } from '../types/index';
+import { checkExpenseAlerts } from './alert.service';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -140,7 +141,7 @@ export async function createExpenseService(
   const exchangeRate = input.exchangeRate ?? 1.0;
   const convertedAmount = Math.round(amount * exchangeRate * 100) / 100;
 
-  return prisma.expense.create({
+  const expense = await prisma.expense.create({
     data: {
       title,
       amount,
@@ -153,6 +154,19 @@ export async function createExpenseService(
       userId,
     },
   });
+
+  // Fire-and-forget: check and send relevant alerts
+  checkExpenseAlerts(userId, {
+    id: expense.id,
+    title: expense.title,
+    amount: expense.amount,
+    currency: expense.currency,
+    convertedAmount: expense.convertedAmount,
+    category: expense.category,
+    date: expense.date,
+  }).catch((err) => console.error('Alert error:', err));
+
+  return expense;
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import { notFoundHandler, errorHandler } from './middleware/errorHandler';
 import { env } from './config/env';
 import { getLlmProviderInfo } from './agents/llm.factory';
 import { processRecurringExpenses } from './services/recurring.service';
+import { sendWeeklyReports, sendMonthlySummaries } from './services/alert.service';
 
 const app = express();
 
@@ -121,6 +122,19 @@ async function start(): Promise<void> {
     60 * 60 * 1000,
   );
   recurringInterval.unref(); // don't block process shutdown
+
+  // ── Daily alert scheduler ────────────────────────────────────────────────────
+  // Runs every 24h; sends weekly reports on Mondays and monthly summaries on 1st
+  const dailyAlertInterval = setInterval(() => {
+    const now = new Date();
+    if (now.getDay() === 1) {
+      sendWeeklyReports().catch(console.error);
+    }
+    if (now.getDate() === 1) {
+      sendMonthlySummaries().catch(console.error);
+    }
+  }, 24 * 60 * 60 * 1000);
+  dailyAlertInterval.unref();
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));

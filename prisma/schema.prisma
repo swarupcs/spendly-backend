@@ -39,6 +39,7 @@ model User {
   budgets            Budget[]
   recurringExpenses  RecurringExpense[]
   goals              FinancialGoal[]
+  alertLogs          AlertLog[]
 
   @@map("users")
 }
@@ -51,6 +52,7 @@ model UserSettings {
   weeklyReport        Boolean  @default(false)
   onboardingCompleted Boolean  @default(false)
   currency            String   @default("INR")
+  alertThreshold      Float?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -160,6 +162,19 @@ model FinancialGoal {
 
   @@index([userId])
   @@map("financial_goals")
+}
+
+model AlertLog {
+  id     Int      @id @default(autoincrement())
+  userId Int
+  type   String   // "budget_80", "budget_100", "large_expense", "weekly", "monthly"
+  ref    String   // dedup key
+  sentAt DateTime @default(now())
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, ref])
+  @@index([userId])
+  @@map("alert_logs")
 }
 
 enum GoalType {
