@@ -5,7 +5,7 @@
   "main": "src/server.ts",
   "scripts": {
     "dev": "nodemon --exec ts-node src/server.ts",
-    "build": "prisma generate && tsc",
+    "build": "rm -rf dist && prisma generate && tsc",
     "postbuild": "mkdir -p dist/generated && cp -r src/generated/prisma dist/generated/prisma",
     "start": "node dist/server.js",
     "test": "jest",
