@@ -1,3 +1,11 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPENSE SERVICE — COMPLETE REPLACEMENT for src/services/expense.service.ts
+//
+// Key fix: use Prisma.ExpenseUncheckedCreateInput / ExpenseUncheckedUpdateInput
+// instead of ExpenseCreateInput/ExpenseUpdateInput so that `userId` is accepted
+// as a scalar (not requiring the `user: { connect: ... }` relation object).
+// ─────────────────────────────────────────────────────────────────────────────
+
 import type { Prisma, Category } from '../generated/prisma';
 import { prisma } from '../config/db';
 import { AppError } from '../middleware/errorHandler';
@@ -25,7 +33,6 @@ export async function listExpensesService(
 ): Promise<ExpenseListResult> {
   const { from, to, category, search } = filters;
 
-  // Coerce to numbers with safe defaults
   const page = Number(filters.page) || 1;
   const limit = Number(filters.limit) || 20;
   const skip = (page - 1) * limit;
@@ -104,7 +111,7 @@ export async function getStatsService(
   };
 }
 
-// ─── Export (all matching, no pagination) ────────────────────────────────────
+// ─── Export ───────────────────────────────────────────────────────────────────
 
 export async function exportExpensesService(
   userId: number,
@@ -141,33 +148,34 @@ export async function createExpenseService(
   const exchangeRate = input.exchangeRate ?? 1.0;
   const convertedAmount = Math.round(amount * exchangeRate * 100) / 100;
 
-  const expense = await prisma.expense.create({
-    data: {
-      title,
-      amount,
-      currency,
-      exchangeRate,
-      convertedAmount,
-      category: (category as Category) ?? 'OTHER',
-      date: date ?? new Date().toISOString().split('T')[0],
-      notes,
-      userId,
-      // New fields — safely spread; Prisma ignores undefined
-      ...((input as Record<string, unknown>)['merchant'] !== undefined && {
-        merchant: (input as Record<string, unknown>)['merchant'] as string,
-      }),
-      ...((input as Record<string, unknown>)['isTaxDeductible'] !==
-        undefined && {
-        isTaxDeductible: (input as Record<string, unknown>)[
-          'isTaxDeductible'
-        ] as boolean,
-      }),
-    } as Prisma.ExpenseCreateInput & {
-      merchant?: string;
-      isTaxDeductible?: boolean;
-    },
-  });
+  // Cast to unknown first to avoid the intersection type conflict with
+  // ExpenseCreateInput (which requires `user` relation) vs
+  // ExpenseUncheckedCreateInput (which accepts raw `userId`).
+  const createData: Prisma.ExpenseUncheckedCreateInput = {
+    title,
+    amount,
+    currency,
+    exchangeRate,
+    convertedAmount,
+    category: (category as Category) ?? 'OTHER',
+    date: date ?? new Date().toISOString().split('T')[0],
+    notes,
+    userId,
+  };
 
+  // Attach new optional fields only when present (graceful pre-migration)
+  const inputAny = input as Record<string, unknown>;
+  if (inputAny['merchant'] !== undefined) {
+    (createData as Record<string, unknown>)['merchant'] = inputAny['merchant'];
+  }
+  if (inputAny['isTaxDeductible'] !== undefined) {
+    (createData as Record<string, unknown>)['isTaxDeductible'] =
+      inputAny['isTaxDeductible'];
+  }
+
+  const expense = await prisma.expense.create({ data: createData });
+
+  // Fire-and-forget alerts
   checkExpenseAlerts(userId, {
     id: expense.id,
     title: expense.title,
@@ -181,8 +189,8 @@ export async function createExpenseService(
   return expense;
 }
 
-// ─── Update Expense ───────────────────────────────────────────────────────────
- 
+// ─── Update ───────────────────────────────────────────────────────────────────
+
 export async function updateExpenseService(
   userId: number,
   id: number,
@@ -190,31 +198,36 @@ export async function updateExpenseService(
 ) {
   const existing = await prisma.expense.findFirst({ where: { id, userId } });
   if (!existing) throw new AppError(404, 'Expense not found');
- 
+
   const { title, amount, category, date, notes } = input;
   const newAmount = amount ?? existing.amount;
   const newRate = input.exchangeRate ?? existing.exchangeRate;
- 
-  return prisma.expense.update({
-    where: { id },
-    data: {
-      ...(title !== undefined && { title }),
-      ...(amount !== undefined && { amount }),
-      ...(input.currency !== undefined && { currency: input.currency }),
-      ...(input.exchangeRate !== undefined && { exchangeRate: input.exchangeRate }),
-      convertedAmount: Math.round(newAmount * newRate * 100) / 100,
-      ...(category !== undefined && { category: category as Category }),
-      ...(date !== undefined && { date }),
-      ...(notes !== undefined && { notes }),
-      // New fields
-      ...((input as Record<string, unknown>)['merchant'] !== undefined && {
-        merchant: (input as Record<string, unknown>)['merchant'] as string,
-      }),
-      ...((input as Record<string, unknown>)['isTaxDeductible'] !== undefined && {
-        isTaxDeductible: (input as Record<string, unknown>)['isTaxDeductible'] as boolean,
-      }),
-    } as Prisma.ExpenseUpdateInput & { merchant?: string; isTaxDeductible?: boolean },
-  });
+
+  // Build update payload using the unchecked variant to accept scalar userId
+  const updateData: Prisma.ExpenseUncheckedUpdateInput = {
+    ...(title !== undefined && { title }),
+    ...(amount !== undefined && { amount }),
+    ...(input.currency !== undefined && { currency: input.currency }),
+    ...(input.exchangeRate !== undefined && {
+      exchangeRate: input.exchangeRate,
+    }),
+    convertedAmount: Math.round(newAmount * newRate * 100) / 100,
+    ...(category !== undefined && { category: category as Category }),
+    ...(date !== undefined && { date }),
+    ...(notes !== undefined && { notes }),
+  };
+
+  // Attach new optional fields only when present
+  const inputAny = input as Record<string, unknown>;
+  if (inputAny['merchant'] !== undefined) {
+    (updateData as Record<string, unknown>)['merchant'] = inputAny['merchant'];
+  }
+  if (inputAny['isTaxDeductible'] !== undefined) {
+    (updateData as Record<string, unknown>)['isTaxDeductible'] =
+      inputAny['isTaxDeductible'];
+  }
+
+  return prisma.expense.update({ where: { id }, data: updateData });
 }
 
 // ─── Delete One ───────────────────────────────────────────────────────────────

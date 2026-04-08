@@ -1,7 +1,13 @@
 import 'dotenv/config';
 import './config/env';
 
+import process from 'node:process';
 import express from 'express';
+
+// Raise the EventEmitter limit before anything else registers listeners.
+// nodemon restarts re-run this module and accumulate process.on() calls;
+// 30 is a safe ceiling — a real leak would need to exceed this deliberately.
+process.setMaxListeners(30);
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -171,6 +177,14 @@ async function start(): Promise<void> {
     sendAnomalyAlerts().catch(console.error);
     sendGoalNudges().catch(console.error);
   }, 5000).unref();
+
+  // ── Process signal handlers ────────────────────────────────────────────────
+  // Remove any handlers added by a previous hot-reload before re-registering,
+  // so we never accumulate duplicates across nodemon restarts.
+  process.removeAllListeners('SIGTERM');
+  process.removeAllListeners('SIGINT');
+  process.removeAllListeners('uncaughtException');
+  process.removeAllListeners('unhandledRejection');
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
