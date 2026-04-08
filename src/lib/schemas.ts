@@ -4,7 +4,11 @@ import { Category, Frequency, GoalType } from '../generated/prisma';
 // ─── Auth Schemas ─────────────────────────────────────────────────────────────
 
 export const signUpSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters').max(100, 'Name too long').trim(),
+  name: z
+    .string()
+    .min(2, 'Name must be at least 2 characters')
+    .max(100, 'Name too long')
+    .trim(),
   email: z.string().email('Invalid email address').toLowerCase().trim(),
   password: z
     .string()
@@ -54,7 +58,7 @@ export const createExpenseSchema = z.object({
   amount: z
     .number({ error: 'Amount must be a number' })
     .positive('Amount must be positive')
-    .max(10_000_000, 'Amount too large'),
+    .max(10_000_000),
   currency: z.string().min(3).max(3).optional(),
   exchangeRate: z.number().positive().optional(),
   category: z.enum(categoryValues).optional(),
@@ -63,6 +67,8 @@ export const createExpenseSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
     .optional(),
   notes: z.string().max(1000, 'Notes too long').optional(),
+  merchant: z.string().max(100).optional(),
+  isTaxDeductible: z.boolean().optional(),
 });
 
 export const updateExpenseSchema = z.object({
@@ -71,13 +77,30 @@ export const updateExpenseSchema = z.object({
   currency: z.string().min(3).max(3).optional(),
   exchangeRate: z.number().positive().optional(),
   category: z.enum(categoryValues).optional(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional(),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
+    .optional(),
   notes: z.string().max(1000).optional(),
+  merchant: z.string().max(100).optional(),
+  isTaxDeductible: z.boolean().optional(),
+});
+
+export const updateNetWorthSchema = z.object({
+  netWorthAssets: z.number().min(0).max(100_000_000_000).optional(),
+  netWorthLiabilities: z.number().min(0).max(100_000_000_000).optional(),
+  monthlyIncome: z.number().positive().max(100_000_000).optional(),
 });
 
 export const expenseFiltersSchema = z.object({
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   category: z.enum(categoryValues).optional(),
   search: z.string().max(200).optional(),
   page: z.coerce.number().int().min(1).default(1),
@@ -125,7 +148,10 @@ export const resendVerificationSchema = z.object({
 
 export const upsertBudgetSchema = z.object({
   category: z.enum(categoryValues),
-  amount: z.number({ error: 'Amount must be a number' }).positive('Amount must be positive').max(10_000_000),
+  amount: z
+    .number({ error: 'Amount must be a number' })
+    .positive('Amount must be positive')
+    .max(10_000_000),
 });
 
 export const budgetOverviewSchema = z.object({
@@ -138,7 +164,11 @@ export const budgetOverviewSchema = z.object({
 // ─── Profile Schema ───────────────────────────────────────────────────────────
 
 export const updateProfileSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters').max(100, 'Name too long').trim(),
+  name: z
+    .string()
+    .min(2, 'Name must be at least 2 characters')
+    .max(100, 'Name too long')
+    .trim(),
 });
 
 // ─── User Settings Schema ─────────────────────────────────────────────────────
@@ -150,6 +180,9 @@ export const updateUserSettingsSchema = z.object({
   onboardingCompleted: z.boolean().optional(),
   currency: z.string().min(3).max(3).optional(),
   alertThreshold: z.number().positive().max(10_000_000).nullable().optional(),
+  monthlyIncome: z.number().positive().max(100_000_000).optional(),
+  netWorthAssets: z.number().min(0).max(100_000_000_000).optional(),
+  netWorthLiabilities: z.number().min(0).max(100_000_000_000).optional(),
 });
 
 // ─── Recurring Expense Schemas ────────────────────────────────────────────────
@@ -157,8 +190,15 @@ export const updateUserSettingsSchema = z.object({
 const frequencyValues = Object.values(Frequency) as [Frequency, ...Frequency[]];
 
 export const createRecurringSchema = z.object({
-  title: z.string().min(1, 'Title is required').max(200, 'Title too long').trim(),
-  amount: z.number({ error: 'Amount must be a number' }).positive('Amount must be positive').max(10_000_000),
+  title: z
+    .string()
+    .min(1, 'Title is required')
+    .max(200, 'Title too long')
+    .trim(),
+  amount: z
+    .number({ error: 'Amount must be a number' })
+    .positive('Amount must be positive')
+    .max(10_000_000),
   category: z.enum(categoryValues).optional(),
   frequency: z.enum(frequencyValues),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD'),
@@ -181,11 +221,20 @@ const goalTypeValues = Object.values(GoalType) as [GoalType, ...GoalType[]];
 export const createGoalSchema = z.object({
   name: z.string().min(1, 'Name is required').max(200, 'Name too long').trim(),
   type: z.enum(goalTypeValues),
-  targetAmount: z.number({ error: 'Amount must be a number' }).positive('Amount must be positive').max(100_000_000),
+  targetAmount: z
+    .number({ error: 'Amount must be a number' })
+    .positive('Amount must be positive')
+    .max(100_000_000),
   currentAmount: z.number().min(0).max(100_000_000).optional(),
   category: z.enum(categoryValues).optional(),
-  period: z.string().regex(/^\d{4}-\d{2}$/, 'Period must be YYYY-MM').optional(),
-  deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Deadline must be YYYY-MM-DD').optional(),
+  period: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/, 'Period must be YYYY-MM')
+    .optional(),
+  deadline: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Deadline must be YYYY-MM-DD')
+    .optional(),
   notes: z.string().max(1000).optional(),
 });
 
@@ -194,8 +243,14 @@ export const updateGoalSchema = z.object({
   targetAmount: z.number().positive().max(100_000_000).optional(),
   currentAmount: z.number().min(0).max(100_000_000).optional(),
   category: z.enum(categoryValues).optional(),
-  period: z.string().regex(/^\d{4}-\d{2}$/).optional(),
-  deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  period: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/)
+    .optional(),
+  deadline: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   isCompleted: z.boolean().optional(),
   notes: z.string().max(1000).optional(),
 });
@@ -203,7 +258,11 @@ export const updateGoalSchema = z.object({
 // ─── Chat Schemas ─────────────────────────────────────────────────────────────
 
 export const chatQuerySchema = z.object({
-  query: z.string().min(1, 'Query is required').max(2000, 'Query too long').trim(),
+  query: z
+    .string()
+    .min(1, 'Query is required')
+    .max(2000, 'Query too long')
+    .trim(),
   threadId: z.string().max(100).optional(),
 });
 
@@ -219,28 +278,29 @@ export const googleCallbackSchema = z.object({
 
 // ─── Inferred types ───────────────────────────────────────────────────────────
 
-export type SignUpInput         = z.infer<typeof signUpSchema>;
-export type SignInInput         = z.infer<typeof signInSchema>;
-export type RefreshTokenInput   = z.infer<typeof refreshTokenSchema>;
+export type SignUpInput = z.infer<typeof signUpSchema>;
+export type SignInInput = z.infer<typeof signInSchema>;
+export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
-export type CreateExpenseInput  = z.infer<typeof createExpenseSchema>;
-export type UpdateExpenseInput  = z.infer<typeof updateExpenseSchema>;
+export type CreateExpenseInput = z.infer<typeof createExpenseSchema>;
+export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
 export type ExpenseFiltersInput = z.infer<typeof expenseFiltersSchema>;
-export type BulkDeleteInput     = z.infer<typeof bulkDeleteSchema>;
-export type ChatQueryInput      = z.infer<typeof chatQuerySchema>;
+export type BulkDeleteInput = z.infer<typeof bulkDeleteSchema>;
+export type ChatQueryInput = z.infer<typeof chatQuerySchema>;
 
 export type GoogleAuthInput = z.infer<typeof googleAuthSchema>;
 export type GoogleCallbackInput = z.infer<typeof googleCallbackSchema>;
 
-export type UpsertBudgetInput      = z.infer<typeof upsertBudgetSchema>;
-export type BudgetOverviewInput    = z.infer<typeof budgetOverviewSchema>;
-export type ForgotPasswordInput    = z.infer<typeof forgotPasswordSchema>;
-export type ResetPasswordInput     = z.infer<typeof resetPasswordSchema>;
-export type VerifyEmailInput       = z.infer<typeof verifyEmailSchema>;
+export type UpsertBudgetInput = z.infer<typeof upsertBudgetSchema>;
+export type BudgetOverviewInput = z.infer<typeof budgetOverviewSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
 export type ResendVerificationInput = z.infer<typeof resendVerificationSchema>;
-export type UpdateUserSettingsInput  = z.infer<typeof updateUserSettingsSchema>;
-export type UpdateProfileInput       = z.infer<typeof updateProfileSchema>;
-export type CreateRecurringInput     = z.infer<typeof createRecurringSchema>;
-export type UpdateRecurringInput     = z.infer<typeof updateRecurringSchema>;
-export type CreateGoalInput          = z.infer<typeof createGoalSchema>;
-export type UpdateGoalInput          = z.infer<typeof updateGoalSchema>;
+export type UpdateUserSettingsInput = z.infer<typeof updateUserSettingsSchema>;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+export type CreateRecurringInput = z.infer<typeof createRecurringSchema>;
+export type UpdateRecurringInput = z.infer<typeof updateRecurringSchema>;
+export type CreateGoalInput = z.infer<typeof createGoalSchema>;
+export type UpdateGoalInput = z.infer<typeof updateGoalSchema>;
+export type UpdateNetWorthInput = z.infer<typeof updateNetWorthSchema>;

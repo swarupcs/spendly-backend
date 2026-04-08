@@ -50,7 +50,7 @@ export async function parseReceipt(
       return;
     }
 
-    const parsed = await parseReceiptImage(image, mediaType);
+    const parsed = await parseReceiptImage(image, mediaType, userId);
 
     // If save=true, immediately create the expense
     let createdExpenseId: number | null = null;
@@ -144,7 +144,7 @@ export async function importCsv(
       return;
     }
 
-    const result = await parseBankStatementCsv(csv);
+    const result = await parseBankStatementCsv(csv, userId);
 
     let savedCount = 0;
     if (save && !dryRun && result.rows.length > 0) {

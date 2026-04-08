@@ -152,10 +152,22 @@ export async function createExpenseService(
       date: date ?? new Date().toISOString().split('T')[0],
       notes,
       userId,
+      // New fields — safely spread; Prisma ignores undefined
+      ...((input as Record<string, unknown>)['merchant'] !== undefined && {
+        merchant: (input as Record<string, unknown>)['merchant'] as string,
+      }),
+      ...((input as Record<string, unknown>)['isTaxDeductible'] !==
+        undefined && {
+        isTaxDeductible: (input as Record<string, unknown>)[
+          'isTaxDeductible'
+        ] as boolean,
+      }),
+    } as Prisma.ExpenseCreateInput & {
+      merchant?: string;
+      isTaxDeductible?: boolean;
     },
   });
 
-  // Fire-and-forget: check and send relevant alerts
   checkExpenseAlerts(userId, {
     id: expense.id,
     title: expense.title,
@@ -169,8 +181,8 @@ export async function createExpenseService(
   return expense;
 }
 
-// ─── Update ───────────────────────────────────────────────────────────────────
-
+// ─── Update Expense ───────────────────────────────────────────────────────────
+ 
 export async function updateExpenseService(
   userId: number,
   id: number,
@@ -178,11 +190,11 @@ export async function updateExpenseService(
 ) {
   const existing = await prisma.expense.findFirst({ where: { id, userId } });
   if (!existing) throw new AppError(404, 'Expense not found');
-
+ 
   const { title, amount, category, date, notes } = input;
   const newAmount = amount ?? existing.amount;
   const newRate = input.exchangeRate ?? existing.exchangeRate;
-
+ 
   return prisma.expense.update({
     where: { id },
     data: {
@@ -194,7 +206,14 @@ export async function updateExpenseService(
       ...(category !== undefined && { category: category as Category }),
       ...(date !== undefined && { date }),
       ...(notes !== undefined && { notes }),
-    },
+      // New fields
+      ...((input as Record<string, unknown>)['merchant'] !== undefined && {
+        merchant: (input as Record<string, unknown>)['merchant'] as string,
+      }),
+      ...((input as Record<string, unknown>)['isTaxDeductible'] !== undefined && {
+        isTaxDeductible: (input as Record<string, unknown>)['isTaxDeductible'] as boolean,
+      }),
+    } as Prisma.ExpenseUpdateInput & { merchant?: string; isTaxDeductible?: boolean },
   });
 }
 

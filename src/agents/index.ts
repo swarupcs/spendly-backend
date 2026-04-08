@@ -12,6 +12,7 @@ import type { ToolCapableLlm } from './llm.factory';
 import type { StreamMessage } from '../types/index';
 import { checkPlanLimit } from '../services/billing.service';
 import { AppError } from '../middleware/errorHandler';
+import { logToolCall } from '../services/toollog.service';
 
 // ─── Shared checkpointer ──────────────────────────────────────────────────────
 // For production at scale, replace with a Redis-backed or DB-backed checkpointer.
@@ -84,6 +85,9 @@ function buildSystemPrompt(): string {
     '  • get_spending_forecast: for "how much will I spend?" or "am I on track?"',
     '  • get_anomalies: for "unusual spending?", "any alerts?", or general financial check',
     '  • get_budget_recommendations: for "suggest my budget" or "help me set a budget"',
+    '  • reallocate_budget: for "move X from shopping to dining" or "rebalance my budget"',
+    '  • mark_tax_deductible: for "this is a business expense" or "mark as tax deductible"',
+    '  • set_merchant: for "that was from Zomato" or when user names a specific store/vendor',
     '  • get_financial_summary: for general "how am I doing?" or overview questions',
     '  • generate_expense_chart: ONLY when user explicitly asks for a chart/graph/visual',
     '  • delete_expense: when user asks to remove a specific expense',
@@ -204,10 +208,53 @@ function isRelevantMessage(text: string): boolean {
 
 // ─── Agent Factory ────────────────────────────────────────────────────────────
 
-export function createAgent(userId: number) {
+export function createAgent(userId: number, threadId?: string) {
   const tools = initTools(userId);
-  const toolNode = new ToolNode(tools);
   const llm: ToolCapableLlm = getLlm();
+
+  // Wrap each tool to capture audit logs (duration + success/error)
+  const auditedTools = tools.map((t) => {
+    const originalInvoke = t.invoke.bind(t);
+    t.invoke = async (input: unknown, config?: unknown) => {
+      const start = Date.now();
+      try {
+        const result = await originalInvoke(
+          input as Parameters<typeof originalInvoke>[0],
+          config as Parameters<typeof originalInvoke>[1],
+        );
+        logToolCall({
+          userId,
+          threadId,
+          toolName: t.name,
+          args: input as Record<string, unknown>,
+          result: (() => {
+            try {
+              return JSON.parse(result as string);
+            } catch {
+              return { raw: result };
+            }
+          })(),
+          durationMs: Date.now() - start,
+          success: true,
+        }).catch(() => {});
+        return result;
+      } catch (err) {
+        logToolCall({
+          userId,
+          threadId,
+          toolName: t.name,
+          args: input as Record<string, unknown>,
+          durationMs: Date.now() - start,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        }).catch(() => {});
+        throw err;
+      }
+    };
+    return t;
+  });
+
+  const toolNode = new ToolNode(auditedTools);
 
   // ── Nodes ─────────────────────────────────────────────────────────────────
 
@@ -230,7 +277,7 @@ export function createAgent(userId: number) {
       }
     }
 
-    const llmWithTools = llm.bindTools(tools);
+    const llmWithTools = llm.bindTools(auditedTools);
 
     const response = await llmWithTools.invoke([
       { role: 'system', content: buildSystemPrompt() },

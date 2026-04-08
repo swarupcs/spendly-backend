@@ -10,6 +10,8 @@ import { currencyRouter } from './currency.routes';
 import { billingRouter } from './billing.routes';
 import { insightsRouter } from './insights.routes';
 import { importRouter } from './import.routes';
+import { financeRouter } from './finance.routes';
+import { onboardingRouter } from './onboarding.routes';
 
 export const apiRouter: Router = Router();
 
@@ -24,3 +26,5 @@ apiRouter.use('/currency', currencyRouter);
 apiRouter.use('/billing', billingRouter);
 apiRouter.use('/insights', insightsRouter);
 apiRouter.use('/import', importRouter);
+apiRouter.use('/finance', financeRouter);
+apiRouter.use('/onboarding', onboardingRouter);

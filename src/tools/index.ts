@@ -1004,6 +1004,194 @@ export function initTools(userId: number) {
     },
   );
 
+  // ─── reallocate_budget ────────────────────────────────────────────────────
+
+  const reallocateBudget = tool(
+    async ({ fromCategory, toCategory, amount }) => {
+      const [fromBudget, toBudget] = await Promise.all([
+        prisma.budget.findUnique({
+          where: {
+            userId_category: { userId, category: fromCategory as Category },
+          },
+        }),
+        prisma.budget.findUnique({
+          where: {
+            userId_category: { userId, category: toCategory as Category },
+          },
+        }),
+      ]);
+
+      if (!fromBudget) {
+        return JSON.stringify({
+          status: 'error',
+          message: `No budget set for ${fromCategory}. Set one first before reallocating.`,
+        });
+      }
+
+      if (fromBudget.amount < amount) {
+        return JSON.stringify({
+          status: 'error',
+          message: `${fromCategory} budget is ₹${fromBudget.amount.toLocaleString('en-IN')}. Cannot move ₹${amount.toLocaleString('en-IN')} — insufficient budget.`,
+        });
+      }
+
+      const newFromAmount =
+        Math.round((fromBudget.amount - amount) * 100) / 100;
+      const newToAmount =
+        Math.round(((toBudget?.amount ?? 0) + amount) * 100) / 100;
+
+      await prisma.$transaction([
+        prisma.budget.update({
+          where: {
+            userId_category: { userId, category: fromCategory as Category },
+          },
+          data: { amount: newFromAmount },
+        }),
+        prisma.budget.upsert({
+          where: {
+            userId_category: { userId, category: toCategory as Category },
+          },
+          create: {
+            userId,
+            category: toCategory as Category,
+            amount: newToAmount,
+          },
+          update: { amount: newToAmount },
+        }),
+      ]);
+
+      return JSON.stringify({
+        status: 'success',
+        message: `Moved ₹${amount.toLocaleString('en-IN')} from ${fromCategory} to ${toCategory}. New balances: ${fromCategory} = ₹${newFromAmount.toLocaleString('en-IN')}, ${toCategory} = ₹${newToAmount.toLocaleString('en-IN')}.`,
+        updated: {
+          [fromCategory]: newFromAmount,
+          [toCategory]: newToAmount,
+        },
+      });
+    },
+    {
+      name: 'reallocate_budget',
+      description:
+        'Move budget money from one category to another. Use when user says "move X from shopping to dining" ' +
+        'or "reallocate my budget" or "I overspent on dining, take from shopping".',
+      schema: z.object({
+        fromCategory: categoryEnum.describe('Category to take budget from'),
+        toCategory: categoryEnum.describe('Category to add budget to'),
+        amount: z.number().positive().describe('Amount in INR to move'),
+      }),
+    },
+  );
+
+  // ─── mark_tax_deductible ──────────────────────────────────────────────────
+
+  const markTaxDeductible = tool(
+    async ({ expenseIds, isTaxDeductible }) => {
+      // Verify all expenses belong to this user
+      const expenses = await prisma.expense.findMany({
+        where: { id: { in: expenseIds }, userId },
+        select: { id: true, title: true },
+      });
+
+      if (expenses.length === 0) {
+        return JSON.stringify({
+          status: 'error',
+          message: 'No matching expenses found.',
+        });
+      }
+
+      const foundIds = expenses.map((e) => e.id);
+
+      // isTaxDeductible is a new field — use raw update to handle pre-migration gracefully
+      try {
+        await prisma.expense.updateMany({
+          where: { id: { in: foundIds }, userId },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          data: { isTaxDeductible } as any,
+        });
+      } catch {
+        return JSON.stringify({
+          status: 'error',
+          message:
+            'Tax deductible field not available yet. Run the schema migration first.',
+        });
+      }
+
+      const action = isTaxDeductible
+        ? 'marked as tax-deductible'
+        : 'unmarked from tax-deductible';
+      return JSON.stringify({
+        status: 'success',
+        message: `${foundIds.length} expense(s) ${action}: ${expenses.map((e) => `"${e.title}"`).join(', ')}.`,
+        updatedIds: foundIds,
+      });
+    },
+    {
+      name: 'mark_tax_deductible',
+      description:
+        'Mark one or more expenses as tax-deductible (or unmark them). ' +
+        'Use when user says "this is a business expense", "mark as tax deductible", ' +
+        'or "this can be claimed". Use get_expenses first to find the expense IDs.',
+      schema: z.object({
+        expenseIds: z
+          .array(z.number().int().positive())
+          .min(1)
+          .describe('List of expense IDs to update'),
+        isTaxDeductible: z
+          .boolean()
+          .describe('true to mark as deductible, false to unmark'),
+      }),
+    },
+  );
+
+  // ─── set_merchant ─────────────────────────────────────────────────────────
+
+  const setMerchant = tool(
+    async ({ expenseId, merchant }) => {
+      const expense = await prisma.expense.findFirst({
+        where: { id: expenseId, userId },
+      });
+      if (!expense) {
+        return JSON.stringify({
+          status: 'error',
+          message: `Expense #${expenseId} not found.`,
+        });
+      }
+
+      try {
+        await prisma.expense.update({
+          where: { id: expenseId },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          data: { merchant } as any,
+        });
+      } catch {
+        return JSON.stringify({
+          status: 'error',
+          message:
+            'Merchant field not available yet. Run the schema migration first.',
+        });
+      }
+
+      return JSON.stringify({
+        status: 'success',
+        message: `Set merchant "${merchant}" on "${expense.title}".`,
+      });
+    },
+    {
+      name: 'set_merchant',
+      description:
+        'Set or update the merchant name on an expense. ' +
+        'Use when user mentions a specific store or vendor (e.g. "that was from Zomato", "at BigBasket").',
+      schema: z.object({
+        expenseId: z
+          .number()
+          .int()
+          .positive()
+          .describe('The expense ID to update'),
+        merchant: z.string().min(1).max(100).describe('Merchant / vendor name'),
+      }),
+    },
+  );
+
   return [
     addExpense,
     updateExpense,
@@ -1015,6 +1203,9 @@ export function initTools(userId: number) {
     getSpendingForecast,
     getAnomalies,
     getBudgetRecommendations,
+    reallocateBudget,
+    markTaxDeductible,
+    setMerchant,
     generateChart,
     deleteExpense,
     getFinancialSummary,

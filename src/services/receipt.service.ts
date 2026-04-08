@@ -33,6 +33,7 @@ export interface ParsedExpenseEntry {
 export async function parseReceiptImage(
   base64Image: string,
   mediaType: string,
+  userId: number,
 ): Promise<ParsedReceipt> {
   const llm = getLlm();
 
@@ -203,6 +204,7 @@ export interface CsvParseResult {
 
 export async function parseBankStatementCsv(
   csvContent: string,
+  userId: number,
 ): Promise<CsvParseResult> {
   const lines = csvContent.split('\n').filter((l) => l.trim());
   if (lines.length < 2)

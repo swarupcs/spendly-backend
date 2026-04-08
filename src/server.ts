@@ -108,6 +108,10 @@ async function start(): Promise<void> {
     console.log(`💬  Chat        → http://localhost:${env.PORT}/api/chat`);
     console.log(`🔍  Insights    → http://localhost:${env.PORT}/api/insights`);
     console.log(`📥  Import      → http://localhost:${env.PORT}/api/import`);
+    console.log(`💰  Finance     → http://localhost:${env.PORT}/api/finance`);
+    console.log(
+      `🎯  Onboarding  → http://localhost:${env.PORT}/api/onboarding`,
+    );
     console.log(`🩺  Health      → http://localhost:${env.PORT}/health`);
     console.log(
       `🤖  LLM         → ${llm.provider.toUpperCase()} / ${llm.model}`,
