@@ -1,14 +1,14 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { AuthenticatedRequest, StreamMessage } from '../types/index';
 import type { ChatQueryInput } from '../lib/schemas';
-import { getAgent } from '../agents/index';
-import { env } from '../config/env';
+import { getAgent, enforceAiMessageLimit } from '../agents/index';
 import {
   scopeThreadId,
   persistUserMessage,
   getChatHistoryService,
   deleteChatHistoryService,
 } from '../services/chat.service';
+import { AppError } from '../middleware/errorHandler';
 
 // ─── POST /api/chat ───────────────────────────────────────────────────────────
 
@@ -20,6 +20,18 @@ export async function streamChat(
   const userId = (req as AuthenticatedRequest).user.sub;
   const { query, threadId } = req.body as ChatQueryInput;
   const scopedThreadId = scopeThreadId(userId, threadId);
+
+  // ── Plan limit check ───────────────────────────────────────────────────────
+  try {
+    await enforceAiMessageLimit(userId);
+  } catch (err) {
+    if (err instanceof AppError) {
+      res.status(err.statusCode).json({ success: false, error: err.message });
+      return;
+    }
+    next(err);
+    return;
+  }
 
   // ── SSE setup ──────────────────────────────────────────────────────────────
   res.writeHead(200, {
@@ -50,51 +62,50 @@ export async function streamChat(
       },
     );
 
-for await (const chunk of responseStream) {
-  if (!isConnected) break;
+    for await (const chunk of responseStream) {
+      if (!isConnected) break;
 
-  const arr = chunk as unknown as unknown[];
-  const msg = arr[0] as {
-    content?: unknown;
-    name?: string;
-    tool_calls?: unknown[];
-    tool_call_chunks?: unknown[];
-    constructor?: { name?: string };
-  };
+      const arr = chunk as unknown as unknown[];
+      const msg = arr[0] as {
+        content?: unknown;
+        name?: string;
+        tool_calls?: unknown[];
+        tool_call_chunks?: unknown[];
+        constructor?: { name?: string };
+      };
 
-  if (!msg || msg.content === '' || msg.content === undefined) continue;
+      if (!msg || msg.content === '' || msg.content === undefined) continue;
 
-  let message: StreamMessage | null = null;
+      let message: StreamMessage | null = null;
 
-  // Detect ToolMessage by absence of tool_calls property
-  const isToolMessage =
-    msg.tool_calls === undefined && msg.tool_call_chunks === undefined;
-  const isAIChunk =
-    msg.tool_calls !== undefined || msg.tool_call_chunks !== undefined;
+      const isToolMessage =
+        msg.tool_calls === undefined && msg.tool_call_chunks === undefined;
+      const isAIChunk =
+        msg.tool_calls !== undefined || msg.tool_call_chunks !== undefined;
 
-  if (isToolMessage && typeof msg.content === 'string') {
-    let result: Record<string, unknown>;
-    try {
-      result = JSON.parse(msg.content) as Record<string, unknown>;
-    } catch {
-      result = { raw: msg.content };
+      if (isToolMessage && typeof msg.content === 'string') {
+        let result: Record<string, unknown>;
+        try {
+          result = JSON.parse(msg.content) as Record<string, unknown>;
+        } catch {
+          result = { raw: msg.content };
+        }
+        message = {
+          type: 'tool',
+          payload: { name: msg.name ?? 'unknown', result },
+        };
+      } else if (
+        isAIChunk &&
+        typeof msg.content === 'string' &&
+        msg.content !== ''
+      ) {
+        message = { type: 'ai', payload: { text: msg.content } };
+      }
+
+      if (message) writeEvent('messages', message);
     }
-    message = {
-      type: 'tool',
-      payload: { name: msg.name ?? 'unknown', result },
-    };
-  } else if (
-    isAIChunk &&
-    typeof msg.content === 'string' &&
-    msg.content !== ''
-  ) {
-    message = { type: 'ai', payload: { text: msg.content } };
-  }
 
-  if (message) writeEvent('messages', message);
-}
-
-    // Persist user message after successful stream (fire-and-forget)
+    // Persist user message (fire-and-forget)
     persistUserMessage(userId, scopedThreadId, query).catch(console.error);
   } catch (err) {
     console.error('[Chat stream error]', err);

@@ -10,6 +10,8 @@ import { initTools } from '../tools/index';
 import { getLlm } from './llm.factory';
 import type { ToolCapableLlm } from './llm.factory';
 import type { StreamMessage } from '../types/index';
+import { checkPlanLimit } from '../services/billing.service';
+import { AppError } from '../middleware/errorHandler';
 
 // ─── Shared checkpointer ──────────────────────────────────────────────────────
 // For production at scale, replace with a Redis-backed or DB-backed checkpointer.
@@ -17,40 +19,88 @@ const checkpointer = new MemorySaver();
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = [
-  'You are a personal finance assistant embedded in an expense tracking app.',
-  `Current datetime: ${new Date().toISOString()}.`,
-  '',
-  '════════════════════════════════════════',
-  'STRICT SCOPE — READ THIS FIRST:',
-  '════════════════════════════════════════',
-  'You ONLY help with personal finance and expense tracking topics. This includes:',
-  '  • Adding, viewing, editing, or deleting expenses',
-  '  • Spending summaries, budgets, and financial insights',
-  "  • Charts and reports about the user's expenses",
-  '  • General personal finance advice (saving, budgeting, etc.)',
-  '',
-  'If the user asks about ANYTHING outside this scope — including but not limited to:',
-  '  coding, general knowledge, science, history, entertainment, recipes, travel,',
-  '  writing essays, creative content, technical support, or any other topic —',
-  'you MUST respond with EXACTLY this message and nothing else:',
-  '  "I\'m your expense tracking assistant, so I can only help with personal finance',
-  '   and expense-related topics. Try asking me to add an expense, show your',
-  '   spending summary, or give you a budget breakdown! 💰"',
-  '',
-  'Do NOT attempt to answer off-topic questions. Do NOT apologise at length.',
-  'Do NOT say you "cannot" help — just redirect as shown above.',
-  '════════════════════════════════════════',
-  '',
-  'BEHAVIOUR (for in-scope requests):',
-  '- Use INR (₹) currency unless the user specifies otherwise.',
-  '- Call add_expense when the user mentions spending or buying something.',
-  '- Call get_expenses to answer questions about past spending.',
-  '- Call generate_expense_chart ONLY when the user explicitly asks for a chart or graph.',
-  '- Call delete_expense when the user asks to remove a specific expense by ID.',
-  '- If you need more info before adding an expense, ask for the missing details.',
-  '- Be concise, friendly, and format numbers in the Indian number system (e.g. ₹1,50,000).',
-].join('\n');
+function buildSystemPrompt(): string {
+  const now = new Date();
+  const dateStr = now.toISOString();
+  const dayOfWeek = now.toLocaleDateString('en-IN', { weekday: 'long' });
+  const monthName = now.toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+  });
+
+  // Indian Financial Year: April 1 – March 31
+  const currentYear = now.getFullYear();
+  const fyStart =
+    now.getMonth() >= 3 // April = month 3 (0-indexed)
+      ? `${currentYear}-04-01`
+      : `${currentYear - 1}-04-01`;
+  const fyEnd =
+    now.getMonth() >= 3 ? `${currentYear + 1}-03-31` : `${currentYear}-03-31`;
+
+  return [
+    'You are Spendly AI — a smart personal finance assistant embedded in an expense tracking app.',
+    `Current datetime: ${dateStr} (${dayOfWeek}, ${monthName}).`,
+    `Indian Financial Year: ${fyStart} to ${fyEnd}.`,
+    '',
+    '════════════════════════════════════════',
+    'STRICT SCOPE — READ THIS FIRST:',
+    '════════════════════════════════════════',
+    'You ONLY help with personal finance and expense tracking topics. This includes:',
+    '  • Adding, viewing, editing, or deleting expenses',
+    '  • Spending summaries, budgets, and financial insights',
+    '  • Charts and reports about expenses',
+    '  • Financial goals tracking (savings, spending limits)',
+    '  • Recurring expenses and subscriptions',
+    '  • Spending forecasts and anomaly detection',
+    '  • Budget recommendations and financial advice',
+    '  • General personal finance advice (saving, budgeting, investing basics)',
+    '',
+    'If the user asks about ANYTHING outside this scope, respond with EXACTLY:',
+    '  "I\'m your expense tracking assistant, so I can only help with personal finance',
+    '   and expense-related topics. Try asking me to add an expense, show your',
+    '   spending summary, or give you a budget breakdown! 💰"',
+    '════════════════════════════════════════',
+    '',
+    'NATURAL LANGUAGE DATE HANDLING:',
+    '  • "today" → use current date',
+    '  • "yesterday" → use yesterday\'s date',
+    '  • "this week" → Monday to today',
+    '  • "last week" → previous Monday to Sunday',
+    '  • "this month" → 1st to today',
+    '  • "last month" → full previous month',
+    '  • "this quarter" → current 3-month period',
+    '  • "this financial year" / "this FY" → April 1 to March 31 (Indian FY)',
+    '  • "last fortnight" → 14 days ago to today',
+    '  • "last 30 days" → 30 days ago to today',
+    '',
+    'TOOL USAGE GUIDELINES:',
+    '  • add_expense: when user mentions spending/buying anything',
+    '  • update_expense: when user wants to edit/correct an expense (use get_expenses first to find ID)',
+    '  • get_expenses: to answer questions about past spending',
+    '  • get_budget_status: when user asks about budgets, budget remaining, budget health',
+    '  • get_recurring_expenses: when user asks about subscriptions, fixed costs, EMIs',
+    '  • get_financial_goals: when user asks about savings goals or spending limits',
+    '  • compare_periods: for "this month vs last month" or any period comparison',
+    '  • get_spending_forecast: for "how much will I spend?" or "am I on track?"',
+    '  • get_anomalies: for "unusual spending?", "any alerts?", or general financial check',
+    '  • get_budget_recommendations: for "suggest my budget" or "help me set a budget"',
+    '  • get_financial_summary: for general "how am I doing?" or overview questions',
+    '  • generate_expense_chart: ONLY when user explicitly asks for a chart/graph/visual',
+    '  • delete_expense: when user asks to remove a specific expense',
+    '',
+    'BEHAVIOUR:',
+    '  • Use INR (₹) currency unless the user specifies otherwise.',
+    '  • Format numbers in Indian style: ₹1,50,000 (not ₹150,000).',
+    '  • Be concise, warm, and actionable — not verbose.',
+    '  • If category is unclear when adding expense, infer from context or ask once.',
+    '  • For multi-expense messages ("spent 200 on food and 500 on uber"), add each separately.',
+    '  • After adding an expense, confirm with the total and category.',
+    '  • When giving insights, highlight 1-2 actionable takeaways.',
+    '  • Never hallucinate data — always call tools to get real data.',
+    '  • For "this month vs last month" questions, always use compare_periods tool.',
+    '  • When user says "last expense" or "recent expense", use get_expenses to find it first.',
+  ].join('\n');
+}
 
 // ─── Off-topic reply ──────────────────────────────────────────────────────────
 
@@ -61,14 +111,6 @@ const OFF_TOPIC_REPLY =
 
 // ─── Topic Guard ──────────────────────────────────────────────────────────────
 
-/**
- * Lightweight keyword-based pre-flight check that short-circuits the LLM call
- * for messages that are obviously off-topic.
- * Saves tokens + latency before even hitting the model.
- *
- * Returns true  → message is RELEVANT (let it through to the LLM).
- * Returns false → message is OFF-TOPIC (reject immediately).
- */
 function isRelevantMessage(text: string): boolean {
   const lower = text.toLowerCase().trim();
 
@@ -77,6 +119,7 @@ function isRelevantMessage(text: string): boolean {
     /^good\s+(morning|afternoon|evening)/,
     /\bwhat can you (do|help)/,
     /\bhow (do|can) (i|you)/,
+    /\bhelp\b/,
     /\bexpense/,
     /\bspend/,
     /\bspent/,
@@ -103,6 +146,8 @@ function isRelevantMessage(text: string): boolean {
     /\bcategor(y|ies)/,
     /\bdelete\s+(expense|record)/,
     /\bremove\s+(expense|record)/,
+    /\bedit\s+(expense|record)/,
+    /\bupdate\s+(expense|record)/,
     /\binr\b/,
     /₹/,
     /\brupee/,
@@ -110,10 +155,29 @@ function isRelevantMessage(text: string): boolean {
     /\bshopping/,
     /\btransport/,
     /\butilities/,
-    /\bhealth\s+expense/,
-    /\beducation\s+expense/,
     /\btracking/,
     /\btransaction/,
+    /\brecurring/,
+    /\bsubscription/,
+    /\bemi\b/,
+    /\bloan\b/,
+    /\bgoal/,
+    /\bsaving/,
+    /\btarget/,
+    /\bforecast/,
+    /\bpredict/,
+    /\banomaly|anomalies/,
+    /\bunusual/,
+    /\boverspend/,
+    /\bon track/,
+    /\bcompare/,
+    /\blast month/,
+    /\bthis month/,
+    /\bthis week/,
+    /\blast week/,
+    /\bfinancial year/,
+    /\bhow am i doing/,
+    /\boverview/,
   ];
 
   if (ALLOW_PATTERNS.some((re) => re.test(lower))) return true;
@@ -121,9 +185,9 @@ function isRelevantMessage(text: string): boolean {
   const BLOCK_PATTERNS: RegExp[] = [
     /\bwrite (a |an )?(poem|story|essay|code|function|script|email(?! expense)|letter|song|blog)/,
     /\b(recipe|how (to )?cook|bake|ingredient|meal (plan|prep))\b/,
-    /\b(weather|forecast|temperature|climate)\b/,
-    /\b(debug|fix (my )?code|coding|programming|javascript|python|typescript|react|nodejs|sql(?! expense)|algorithm|data structure)\b/,
-    /\b(capital of|president of|who (invented|discovered|wrote)|history of|tell me about|explain (quantum|relativity|photosynthesis))\b/,
+    /\b(weather|forecast|temperature|climate)\b(?!.*spend)(?!.*budget)/,
+    /\b(debug|fix (my )?code|coding|programming|javascript|python|typescript|react|nodejs|sql(?! expense)|algorithm)\b/,
+    /\b(capital of|president of|who (invented|discovered|wrote)|history of|explain (quantum|relativity|photosynthesis))\b/,
     /\b(movie|film|series|tv show|song|music|lyrics|actor|actress|celebrity|anime)\b/,
     /\b(translate (this|to|into)|in (french|spanish|german|japanese|arabic|chinese|korean))\b/,
     /\b(joke|riddle|fun fact|trivia|play (a\s+)?(game|quiz))\b/,
@@ -135,20 +199,15 @@ function isRelevantMessage(text: string): boolean {
 
   if (BLOCK_PATTERNS.some((re) => re.test(lower))) return false;
 
-  return true; // Default: allow — system prompt is the final guard
+  return true;
 }
 
 // ─── Agent Factory ────────────────────────────────────────────────────────────
 
-/**
- * Builds and compiles a LangGraph StateGraph for a specific user.
- * Tools are instantiated with userId so they always query the right user's data.
- * The LLM instance is resolved once via the factory (singleton across agents).
- */
 export function createAgent(userId: number) {
   const tools = initTools(userId);
   const toolNode = new ToolNode(tools);
-  const llm: ToolCapableLlm = getLlm(); // ← provider-agnostic singleton
+  const llm: ToolCapableLlm = getLlm();
 
   // ── Nodes ─────────────────────────────────────────────────────────────────
 
@@ -156,7 +215,6 @@ export function createAgent(userId: number) {
     state: typeof MessagesAnnotation.State,
     _config: LangGraphRunnableConfig,
   ) {
-    // Pre-flight topic guard — short-circuit before hitting the provider
     const lastUserMessage = [...state.messages]
       .reverse()
       .find((m) => m.getType() === 'human');
@@ -175,7 +233,7 @@ export function createAgent(userId: number) {
     const llmWithTools = llm.bindTools(tools);
 
     const response = await llmWithTools.invoke([
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: buildSystemPrompt() },
       ...state.messages,
     ]);
 
@@ -191,15 +249,17 @@ export function createAgent(userId: number) {
     const lastMessage = state.messages.at(-1) as AIMessage;
 
     if (lastMessage.tool_calls?.length) {
-      const firstCall = lastMessage.tool_calls[0];
-      const announcement: StreamMessage = {
-        type: 'toolCall:start',
-        payload: {
-          name: firstCall.name,
-          args: firstCall.args as Record<string, unknown>,
-        },
-      };
-      config.writer!(announcement);
+      // Announce all tool calls, not just the first
+      for (const call of lastMessage.tool_calls) {
+        const announcement: StreamMessage = {
+          type: 'toolCall:start',
+          payload: {
+            name: call.name,
+            args: call.args as Record<string, unknown>,
+          },
+        };
+        config.writer!(announcement);
+      }
       return 'tools';
     }
 
@@ -214,10 +274,9 @@ export function createAgent(userId: number) {
         string,
         unknown
       >;
-      // Chart data is rendered client-side — don't pass it back to the LLM
       if (parsed['type'] === 'chart') return '__end__';
     } catch {
-      // Not JSON → normal tool result, continue to model for a human-readable reply
+      // Not JSON → normal tool result
     }
 
     return 'callModel';
@@ -243,10 +302,6 @@ export function createAgent(userId: number) {
 
 // ─── Agent Cache ──────────────────────────────────────────────────────────────
 
-/**
- * Cache compiled agents by userId.
- * The MemorySaver stores per-thread history; the agent instance itself is stateless.
- */
 const agentCache = new Map<number, ReturnType<typeof createAgent>>();
 
 export function getAgent(userId: number): ReturnType<typeof createAgent> {
@@ -256,7 +311,12 @@ export function getAgent(userId: number): ReturnType<typeof createAgent> {
   return agentCache.get(userId)!;
 }
 
-/** Flush the cache — useful in tests or after a provider change. */
 export function clearAgentCache(): void {
   agentCache.clear();
+}
+
+// ─── Plan limit enforcement ───────────────────────────────────────────────────
+
+export async function enforceAiMessageLimit(userId: number): Promise<void> {
+  await checkPlanLimit(userId, 'aiMessages');
 }
