@@ -2,6 +2,7 @@ import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { prisma } from '../config/db';
 import type { Category } from '../generated/prisma';
+import { checkExpenseAlerts } from '../services/alerts.service';
 
 const categoryEnum = z.enum([
   'DINING',
@@ -35,22 +36,16 @@ export function initTools(userId: number) {
         },
       });
 
-      // Fire budget/alert checks asynchronously
-      try {
-        const { checkExpenseAlerts } =
-          await import('../services/alert.service');
-        checkExpenseAlerts(userId, {
-          id: expense.id,
-          title: expense.title,
-          amount: expense.amount,
-          currency: expense.currency,
-          convertedAmount: expense.convertedAmount,
-          category: expense.category,
-          date: expense.date,
-        }).catch(console.error);
-      } catch {
-        /* non-fatal */
-      }
+      // Fire budget/alert checks asynchronously — non-fatal
+      checkExpenseAlerts(userId, {
+        id: expense.id,
+        title: expense.title,
+        amount: expense.amount,
+        currency: expense.currency,
+        convertedAmount: expense.convertedAmount,
+        category: expense.category,
+        date: expense.date,
+      }).catch(console.error);
 
       return JSON.stringify({
         status: 'success',
@@ -361,7 +356,6 @@ export function initTools(userId: number) {
         return JSON.stringify({ message: 'No financial goals set.', data: [] });
       }
 
-      // For SPENDING_LIMIT goals, compute actual spending
       const now = new Date();
       const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
@@ -399,7 +393,7 @@ export function initTools(userId: number) {
 
           const isOnTrack =
             g.type === 'SAVINGS'
-              ? progress >= 50 // rough heuristic
+              ? progress >= 50
               : currentAmount <= g.targetAmount;
 
           return {
@@ -564,7 +558,6 @@ export function initTools(userId: number) {
       const dayOfMonth = now.getDate();
       const daysInMonth = lastDay;
 
-      // Spending so far this month
       const expenses = await prisma.expense.findMany({
         where: {
           userId,
@@ -580,7 +573,6 @@ export function initTools(userId: number) {
       const projectedRemaining =
         Math.round(dailyAvg * remainingDays * 100) / 100;
 
-      // Compare to last month
       const prevMonthNum = mon === 1 ? 12 : mon - 1;
       const prevYear = mon === 1 ? year - 1 : year;
       const prevMonthStr = `${prevYear}-${String(prevMonthNum).padStart(2, '0')}`;
@@ -597,7 +589,6 @@ export function initTools(userId: number) {
       });
       const lastMonthTotal = prevAgg._sum.convertedAmount ?? 0;
 
-      // Budgets
       const budgets = await prisma.budget.findMany({ where: { userId } });
       const totalBudget = budgets.reduce((s, b) => s + b.amount, 0);
 
@@ -663,7 +654,6 @@ export function initTools(userId: number) {
       const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const [year, mon] = currentMonth.split('-').map(Number);
 
-      // Get last 3 months for baseline
       const months: string[] = [];
       for (let i = 1; i <= 3; i++) {
         const d = new Date(year, mon - 1 - i, 1);
@@ -751,7 +741,7 @@ export function initTools(userId: number) {
     },
   );
 
-  // ─── get_ai_budget_recommendations ───────────────────────────────────────
+  // ─── get_budget_recommendations ───────────────────────────────────────────
 
   const getBudgetRecommendations = tool(
     async () => {
@@ -789,7 +779,6 @@ export function initTools(userId: number) {
       const recommendations = Object.entries(allSpend).map(([cat, values]) => {
         const avg = values.reduce((s, v) => s + v, 0) / values.length;
         const max = Math.max(...values);
-        // Recommend 10% buffer above average, capped at max + 5%
         const recommended =
           Math.round(Math.min(avg * 1.1, max * 1.05) * 100) / 100;
         const current = budgetMap[cat] ?? null;
@@ -1086,7 +1075,6 @@ export function initTools(userId: number) {
 
   const markTaxDeductible = tool(
     async ({ expenseIds, isTaxDeductible }) => {
-      // Verify all expenses belong to this user
       const expenses = await prisma.expense.findMany({
         where: { id: { in: expenseIds }, userId },
         select: { id: true, title: true },
@@ -1101,7 +1089,6 @@ export function initTools(userId: number) {
 
       const foundIds = expenses.map((e) => e.id);
 
-      // isTaxDeductible is a new field — use raw update to handle pre-migration gracefully
       try {
         await prisma.expense.updateMany({
           where: { id: { in: foundIds }, userId },
