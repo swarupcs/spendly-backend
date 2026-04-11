@@ -5,6 +5,7 @@ import { getAgent, enforceAiMessageLimit } from '../agents/index';
 import {
   scopeThreadId,
   persistUserMessage,
+  persistAssistantMessage,
   getChatHistoryService,
   deleteChatHistoryService,
 } from '../services/chat.service';
@@ -51,8 +52,10 @@ export async function streamChat(
     isConnected = false;
   });
 
+  // Accumulate all AI text chunks into one final response
+  const aiResponseChunks: string[] = [];
+
   try {
-    // FIX: await getAgent — it is now async due to PostgresSaver setup
     const agent = await getAgent(userId, scopedThreadId);
 
     const responseStream = await agent.stream(
@@ -67,47 +70,60 @@ export async function streamChat(
       if (!isConnected) break;
 
       const arr = chunk as unknown as unknown[];
-      const msg = arr[0] as {
-        content?: unknown;
-        name?: string;
-        tool_calls?: unknown[];
-        tool_call_chunks?: unknown[];
-        constructor?: { name?: string };
-      };
+      const msg = arr[0] as Record<string, unknown>;
 
-      if (!msg || msg.content === '' || msg.content === undefined) continue;
+      if (!msg) continue;
 
-      let message: StreamMessage | null = null;
+      const content = msg['content'];
+      const name = msg['name'] as string | undefined;
+      const toolCalls = msg['tool_calls'];
+      const toolCallChunks = msg['tool_call_chunks'];
 
-      const isToolMessage =
-        msg.tool_calls === undefined && msg.tool_call_chunks === undefined;
-      const isAIChunk =
-        msg.tool_calls !== undefined || msg.tool_call_chunks !== undefined;
+      if (content === '' || content === undefined || content === null) continue;
 
-      if (isToolMessage && typeof msg.content === 'string') {
+      // ── Tool result (message returned BY a tool) ──────────────────────────
+      // Has a name field (the tool name), content is the JSON result string
+      if (name !== undefined && typeof content === 'string') {
         let result: Record<string, unknown>;
         try {
-          result = JSON.parse(msg.content) as Record<string, unknown>;
+          result = JSON.parse(content) as Record<string, unknown>;
         } catch {
-          result = { raw: msg.content };
+          result = { raw: content };
         }
-        message = {
+        writeEvent('messages', {
           type: 'tool',
-          payload: { name: msg.name ?? 'unknown', result },
-        };
-      } else if (
-        isAIChunk &&
-        typeof msg.content === 'string' &&
-        msg.content !== ''
-      ) {
-        message = { type: 'ai', payload: { text: msg.content } };
+          payload: { name, result },
+        });
+        continue;
       }
 
-      if (message) writeEvent('messages', message);
+      // ── AI is invoking a tool (tool_calls present and non-empty) ─────────
+      // content here is empty or a partial thought — skip for history
+      if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+        continue;
+      }
+
+      if (Array.isArray(toolCallChunks) && toolCallChunks.length > 0) {
+        continue;
+      }
+
+      // ── Plain AI text response ─────────────────────────────────────────────
+      if (typeof content === 'string' && content !== '') {
+        aiResponseChunks.push(content);
+        writeEvent('messages', {
+          type: 'ai',
+          payload: { text: content },
+        });
+      }
     }
 
-    // Persist user message (fire-and-forget)
-    persistUserMessage(userId, scopedThreadId, query).catch(console.error);
+    // ── Persist both messages after stream completes ───────────────────────
+    const fullAiResponse = aiResponseChunks.join('');
+
+    await Promise.all([
+      persistUserMessage(userId, scopedThreadId, query),
+      persistAssistantMessage(userId, scopedThreadId, fullAiResponse),
+    ]);
   } catch (err) {
     console.error('[Chat stream error]', err);
     if (isConnected) {
