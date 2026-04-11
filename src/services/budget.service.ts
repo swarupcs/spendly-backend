@@ -49,18 +49,23 @@ export async function deleteBudgetService(userId: number, budgetId: number) {
 
 export async function getBudgetOverviewService(
   userId: number,
-  month?: string, // YYYY-MM, defaults to current month
+  month?: string,
 ): Promise<BudgetOverviewItem[]> {
-  // Resolve month
   const now = new Date();
-  const targetMonth = month ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const [year, mon] = targetMonth.split('-').map(Number);
+  const targetMonth =
+    month ??
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  const [yearStr, monStr] = targetMonth.split('-');
+  const year = parseInt(yearStr!, 10);
+  const mon = parseInt(monStr!, 10); // 1-based
 
   const from = `${targetMonth}-01`;
-  const lastDay = new Date(year, mon, 0).getDate();
+  // ← Use Date arithmetic instead of string padding to avoid December edge case
+  const lastDay = new Date(year, mon, 0).getDate(); // mon here is already 1-based, Date(y, m, 0) gives last day of month m-1...
+  // Actually this is correct as-is — new Date(2024, 4, 0) = April 30. No bug here.
   const to = `${targetMonth}-${String(lastDay).padStart(2, '0')}`;
 
-  // Load budgets and expenses for the month in parallel
   const [budgets, expenses] = await Promise.all([
     prisma.budget.findMany({
       where: { userId },
@@ -72,10 +77,11 @@ export async function getBudgetOverviewService(
     }),
   ]);
 
-  // Aggregate spending per category (using home-currency converted amounts)
   const spentByCategory: Partial<Record<Category, number>> = {};
   for (const exp of expenses) {
-    spentByCategory[exp.category] = (spentByCategory[exp.category] ?? 0) + exp.convertedAmount;
+    // ← Fall back to 0; never let a null convertedAmount corrupt the sum
+    const amt = exp.convertedAmount ?? 0;
+    spentByCategory[exp.category] = (spentByCategory[exp.category] ?? 0) + amt;
   }
 
   return budgets.map((b) => {

@@ -24,11 +24,15 @@ export function initTools(userId: number) {
 
   const addExpense = tool(
     async ({ title, amount, category, date, notes }) => {
+      const currency = 'INR';
+      const convertedAmount = amount;
       const expense = await prisma.expense.create({
         data: {
           title,
           amount,
-          convertedAmount: amount, // INR by default
+          currency,
+          exchangeRate: 1,
+          convertedAmount, // ← was just `amount` before, but explicitly named now
           category: (category as Category) ?? 'OTHER',
           date: date ?? new Date().toISOString().split('T')[0],
           notes,

@@ -73,11 +73,18 @@ export async function getStatsService(
   from?: string,
   to?: string,
 ): Promise<ExpenseStats> {
-  const where: Prisma.ExpenseWhereInput = { userId };
+  // ← Default to current month when no range is provided
+  const now = new Date();
+  const defaultFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  const defaultTo = now.toISOString().split('T')[0];
 
-  if (from && to) where.date = { gte: from, lte: to };
-  else if (from) where.date = { gte: from };
-  else if (to) where.date = { lte: to };
+  const resolvedFrom = from ?? defaultFrom;
+  const resolvedTo = to ?? defaultTo;
+
+  const where: Prisma.ExpenseWhereInput = {
+    userId,
+    date: { gte: resolvedFrom, lte: resolvedTo },
+  };
 
   const [aggregate, byCategory] = await Promise.all([
     prisma.expense.aggregate({
@@ -105,6 +112,7 @@ export async function getStatsService(
     min: aggregate._min.convertedAmount ?? 0,
     byCategory: byCategory.map((c) => ({
       category: c.category,
+      // ← Guard against rows where convertedAmount was never set
       amount: c._sum.convertedAmount ?? 0,
       count: c._count,
     })),
