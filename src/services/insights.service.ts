@@ -66,11 +66,20 @@ export interface BudgetRecommendation {
 
 function monthRange(yearMonth: string): { from: string; to: string } {
   const [y, m] = yearMonth.split('-').map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
+  const lastDay = new Date(y!, m!, 0).getDate();
   return {
     from: `${yearMonth}-01`,
     to: `${yearMonth}-${String(lastDay).padStart(2, '0')}`,
   };
+}
+
+// FIX: helper that returns the effective INR amount for a row,
+// falling back to `amount` when convertedAmount is 0 (legacy rows).
+function effectiveAmount(row: {
+  convertedAmount: number;
+  amount: number;
+}): number {
+  return row.convertedAmount > 0 ? row.convertedAmount : row.amount;
 }
 
 async function getCategorySpendForMonth(
@@ -78,13 +87,14 @@ async function getCategorySpendForMonth(
   yearMonth: string,
 ): Promise<Record<string, number>> {
   const { from, to } = monthRange(yearMonth);
+  // FIX: select `amount` so the fallback is available
   const rows = await prisma.expense.findMany({
     where: { userId, date: { gte: from, lte: to } },
-    select: { category: true, convertedAmount: true },
+    select: { category: true, convertedAmount: true, amount: true },
   });
   const result: Record<string, number> = {};
   for (const r of rows) {
-    result[r.category] = (result[r.category] ?? 0) + r.convertedAmount;
+    result[r.category] = (result[r.category] ?? 0) + effectiveAmount(r);
   }
   return result;
 }
@@ -161,37 +171,38 @@ export async function getMonthForecast(
     yearMonth ??
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const [year, mon] = targetMonth.split('-').map(Number);
-  const daysInMonth = new Date(year, mon, 0).getDate();
+  const daysInMonth = new Date(year!, mon!, 0).getDate();
   const dayOfMonth = now.getDate();
   const remainingDays = daysInMonth - dayOfMonth;
 
-  const todayStr = now.toISOString().split('T')[0];
+  const todayStr = now.toISOString().split('T')[0]!;
   const from = `${targetMonth}-01`;
   const to = `${targetMonth}-${daysInMonth}`;
 
-  const [expAgg, budgets] = await Promise.all([
-    prisma.expense.aggregate({
+  // FIX: select both fields for fallback
+  const [expenses, budgets] = await Promise.all([
+    prisma.expense.findMany({
       where: {
         userId,
         date: { gte: from, lte: todayStr < to ? todayStr : to },
       },
-      _sum: { convertedAmount: true },
+      select: { convertedAmount: true, amount: true },
     }),
     prisma.budget.findMany({ where: { userId } }),
   ]);
 
-  const spentSoFar = expAgg._sum.convertedAmount ?? 0;
+  // FIX: use effectiveAmount helper
+  const spentSoFar = expenses.reduce((s, e) => s + effectiveAmount(e), 0);
   const dailyAvg = dayOfMonth > 0 ? spentSoFar / dayOfMonth : 0;
   const projectedTotal = Math.round(dailyAvg * daysInMonth * 100) / 100;
   const projectedRemaining = Math.round(dailyAvg * remainingDays * 100) / 100;
 
-  // Last month comparison
-  const prevMonthNum = mon === 1 ? 12 : mon - 1;
-  const prevYear = mon === 1 ? year - 1 : year;
+  const prevMonthNum = mon! === 1 ? 12 : mon! - 1;
+  const prevYear = mon! === 1 ? year! - 1 : year!;
   const prevMonthStr = `${prevYear}-${String(prevMonthNum).padStart(2, '0')}`;
   const prevLastDay = new Date(prevYear, prevMonthNum, 0).getDate();
 
-  const prevAgg = await prisma.expense.aggregate({
+  const prevExpenses = await prisma.expense.findMany({
     where: {
       userId,
       date: {
@@ -199,10 +210,14 @@ export async function getMonthForecast(
         lte: `${prevMonthStr}-${prevLastDay}`,
       },
     },
-    _sum: { convertedAmount: true },
+    select: { convertedAmount: true, amount: true },
   });
 
-  const lastMonthTotal = prevAgg._sum.convertedAmount ?? 0;
+  // FIX: use effectiveAmount for last month too
+  const lastMonthTotal = prevExpenses.reduce(
+    (s, e) => s + effectiveAmount(e),
+    0,
+  );
   const totalBudget = budgets.reduce((s, b) => s + b.amount, 0);
 
   return {
@@ -236,14 +251,15 @@ export async function comparePeriods(
   p2From: string,
   p2To: string,
 ): Promise<PeriodComparison> {
+  // FIX: select both fields for fallback
   const [e1, e2] = await Promise.all([
     prisma.expense.findMany({
       where: { userId, date: { gte: p1From, lte: p1To } },
-      select: { category: true, convertedAmount: true },
+      select: { category: true, convertedAmount: true, amount: true },
     }),
     prisma.expense.findMany({
       where: { userId, date: { gte: p2From, lte: p2To } },
-      select: { category: true, convertedAmount: true },
+      select: { category: true, convertedAmount: true, amount: true },
     }),
   ]);
 
@@ -251,9 +267,9 @@ export async function comparePeriods(
     const byCategory: Record<string, number> = {};
     let total = 0;
     for (const r of rows) {
-      byCategory[r.category] =
-        (byCategory[r.category] ?? 0) + r.convertedAmount;
-      total += r.convertedAmount;
+      const eff = effectiveAmount(r);
+      byCategory[r.category] = (byCategory[r.category] ?? 0) + eff;
+      total += eff;
     }
     return {
       total: Math.round(total * 100) / 100,
@@ -361,12 +377,18 @@ export async function analyzeSpendingPatterns(
 ): Promise<SpendingPattern> {
   const now = new Date();
   const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-  const from = threeMonthsAgo.toISOString().split('T')[0];
-  const to = now.toISOString().split('T')[0];
+  const from = threeMonthsAgo.toISOString().split('T')[0]!;
+  const to = now.toISOString().split('T')[0]!;
 
+  // FIX: select both fields for fallback
   const expenses = await prisma.expense.findMany({
     where: { userId, date: { gte: from, lte: to } },
-    select: { date: true, convertedAmount: true, category: true },
+    select: {
+      date: true,
+      convertedAmount: true,
+      amount: true,
+      category: true,
+    },
     orderBy: { date: 'asc' },
   });
 
@@ -380,11 +402,10 @@ export async function analyzeSpendingPatterns(
     };
   }
 
-  // Day-of-week analysis
   const byDow: Record<number, number> = {};
   for (const e of expenses) {
     const dow = new Date(e.date).getDay();
-    byDow[dow] = (byDow[dow] ?? 0) + e.convertedAmount;
+    byDow[dow] = (byDow[dow] ?? 0) + effectiveAmount(e);
   }
   const days = [
     'Sunday',
@@ -396,50 +417,46 @@ export async function analyzeSpendingPatterns(
     'Saturday',
   ];
   const topDow = Object.entries(byDow).sort(([, a], [, b]) => b - a)[0];
-  const topSpendingDayOfWeek = topDow ? days[parseInt(topDow[0])] : 'N/A';
+  const topSpendingDayOfWeek = topDow ? days[parseInt(topDow[0])]! : 'N/A';
 
-  // Week-of-month analysis
   const byWom: Record<number, number> = {};
   for (const e of expenses) {
     const dom = new Date(e.date).getDate();
     const wom = Math.ceil(dom / 7);
-    byWom[wom] = (byWom[wom] ?? 0) + e.convertedAmount;
+    byWom[wom] = (byWom[wom] ?? 0) + effectiveAmount(e);
   }
   const topWom = Object.entries(byWom).sort(([, a], [, b]) => b - a)[0];
   const topSpendingWeekOfMonth = topWom ? parseInt(topWom[0]) : 0;
 
-  // Daily spend
   const byDate: Record<string, number> = {};
   for (const e of expenses) {
-    byDate[e.date] = (byDate[e.date] ?? 0) + e.convertedAmount;
+    byDate[e.date] = (byDate[e.date] ?? 0) + effectiveAmount(e);
   }
   const uniqueDays = Object.keys(byDate).length;
-  const totalSpend = expenses.reduce((s, e) => s + e.convertedAmount, 0);
+  const totalSpend = expenses.reduce((s, e) => s + effectiveAmount(e), 0);
   const averageDailySpend =
     uniqueDays > 0 ? Math.round((totalSpend / uniqueDays) * 100) / 100 : 0;
 
-  // High-spend days (> 2x average)
   const highSpendDays = Object.entries(byDate)
     .filter(([, amt]) => amt > averageDailySpend * 2)
     .map(([date, amount]) => ({ date, amount: Math.round(amount * 100) / 100 }))
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 5);
 
-  // Category trends (compare first half vs second half of the period)
   const midDate = new Date(
     threeMonthsAgo.getTime() + (now.getTime() - threeMonthsAgo.getTime()) / 2,
   )
     .toISOString()
-    .split('T')[0];
+    .split('T')[0]!;
 
   const firstHalf: Record<string, number> = {};
   const secondHalf: Record<string, number> = {};
   for (const e of expenses) {
     if (e.date <= midDate) {
-      firstHalf[e.category] = (firstHalf[e.category] ?? 0) + e.convertedAmount;
+      firstHalf[e.category] = (firstHalf[e.category] ?? 0) + effectiveAmount(e);
     } else {
       secondHalf[e.category] =
-        (secondHalf[e.category] ?? 0) + e.convertedAmount;
+        (secondHalf[e.category] ?? 0) + effectiveAmount(e);
     }
   }
 
@@ -471,7 +488,7 @@ export async function analyzeSpendingPatterns(
 // ─── Financial Health Score ───────────────────────────────────────────────────
 
 export interface FinancialHealthScore {
-  score: number; // 0–100
+  score: number;
   grade: 'A' | 'B' | 'C' | 'D' | 'F';
   breakdown: Array<{
     metric: string;
@@ -488,21 +505,24 @@ export async function computeFinancialHealthScore(
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const { from, to } = monthRange(currentMonth);
-  const todayStr = now.toISOString().split('T')[0];
+  const todayStr = now.toISOString().split('T')[0]!;
 
-  const [budgets, goals, anomalies, expenses, settings] = await Promise.all([
+  const [budgets, goals, anomalies, expenses] = await Promise.all([
     prisma.budget.findMany({ where: { userId } }),
     prisma.financialGoal.findMany({ where: { userId } }),
     detectSpendingAnomalies(userId),
-    prisma.expense.aggregate({
+    // FIX: select both fields
+    prisma.expense.findMany({
       where: {
         userId,
         date: { gte: from, lte: todayStr < to ? todayStr : to },
       },
-      _sum: { convertedAmount: true },
+      select: { convertedAmount: true, amount: true },
     }),
-    prisma.userSettings.findUnique({ where: { userId } }),
   ]);
+
+  // FIX: use effectiveAmount for monthly spend
+  const monthlySpend = expenses.reduce((s, e) => s + effectiveAmount(e), 0);
 
   const breakdown: FinancialHealthScore['breakdown'] = [];
   const recommendations: string[] = [];
@@ -515,7 +535,6 @@ export async function computeFinancialHealthScore(
       'Set monthly budgets for your spending categories to track your finances better.',
     );
   } else {
-    const monthlySpend = expenses._sum.convertedAmount ?? 0;
     const totalBudget = budgets.reduce((s, b) => s + b.amount, 0);
     const utilization = totalBudget > 0 ? monthlySpend / totalBudget : 1;
     budgetScore =
@@ -570,7 +589,7 @@ export async function computeFinancialHealthScore(
     25 - highAnomalies * 10 - mediumAnomalies * 5,
   );
   if (anomalies.length > 0) {
-    const topAnomaly = anomalies[0];
+    const topAnomaly = anomalies[0]!;
     recommendations.push(
       `Your ${topAnomaly.category} spending is ${topAnomaly.percentageIncrease}% above average. Consider reviewing these expenses.`,
     );
@@ -650,23 +669,27 @@ export async function buildWeeklyInsightData(
   const lastMonday = new Date(thisMonday);
   lastMonday.setDate(thisMonday.getDate() - 7);
 
-  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  const fmt = (d: Date) => d.toISOString().split('T')[0]!;
   const fromDate = fmt(thisMonday);
   const toDate = fmt(now);
   const lastFrom = fmt(lastMonday);
   const lastTo = fmt(new Date(lastMonday.getTime() + 6 * 24 * 60 * 60 * 1000));
 
-  const [thisWeek, lastWeek, budgetStatus, anomalyList, settings] =
+  // FIX: fetch raw rows with both amount fields instead of using groupBy aggregate
+  // so we can apply the effectiveAmount fallback before summing
+  const [thisWeekRaw, lastWeekRaw, budgetStatus, anomalyList, settings] =
     await Promise.all([
-      prisma.expense.groupBy({
-        by: ['category'],
+      prisma.expense.findMany({
         where: { userId, date: { gte: fromDate, lte: toDate } },
-        _sum: { convertedAmount: true },
-        _count: true,
+        select: {
+          category: true,
+          convertedAmount: true,
+          amount: true,
+        },
       }),
-      prisma.expense.aggregate({
+      prisma.expense.findMany({
         where: { userId, date: { gte: lastFrom, lte: lastTo } },
-        _sum: { convertedAmount: true },
+        select: { convertedAmount: true, amount: true },
       }),
       prisma.budget.findMany({ where: { userId } }),
       detectSpendingAnomalies(userId),
@@ -676,14 +699,26 @@ export async function buildWeeklyInsightData(
       }),
     ]);
 
-  const total = thisWeek.reduce((s, r) => s + (r._sum.convertedAmount ?? 0), 0);
-  const count = thisWeek.reduce((s, r) => s + r._count, 0);
-  const sorted = [...thisWeek].sort(
-    (a, b) => (b._sum.convertedAmount ?? 0) - (a._sum.convertedAmount ?? 0),
+  // Aggregate this week by category using effectiveAmount
+  const byCategoryMap: Record<string, { amount: number; count: number }> = {};
+  for (const e of thisWeekRaw) {
+    const eff = effectiveAmount(e);
+    if (!byCategoryMap[e.category]) {
+      byCategoryMap[e.category] = { amount: 0, count: 0 };
+    }
+    byCategoryMap[e.category]!.amount += eff;
+    byCategoryMap[e.category]!.count += 1;
+  }
+
+  const total = Object.values(byCategoryMap).reduce((s, v) => s + v.amount, 0);
+  const count = thisWeekRaw.length;
+
+  const sorted = Object.entries(byCategoryMap).sort(
+    ([, a], [, b]) => b.amount - a.amount,
   );
   const top = sorted[0];
 
-  const lastWeekTotal = lastWeek._sum.convertedAmount ?? 0;
+  const lastWeekTotal = lastWeekRaw.reduce((s, e) => s + effectiveAmount(e), 0);
   const vsLastWeekPct =
     lastWeekTotal > 0
       ? Math.round(((total - lastWeekTotal) / lastWeekTotal) * 100)
@@ -692,14 +727,16 @@ export async function buildWeeklyInsightData(
   // Budget warnings for this month
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const { from: mFrom, to: mTo } = monthRange(currentMonth);
-  const monthExpenses = await prisma.expense.groupBy({
-    by: ['category'],
+  const monthExpensesRaw = await prisma.expense.findMany({
     where: { userId, date: { gte: mFrom, lte: mTo } },
-    _sum: { convertedAmount: true },
+    select: { category: true, convertedAmount: true, amount: true },
   });
+
   const monthSpendMap: Record<string, number> = {};
-  for (const e of monthExpenses)
-    monthSpendMap[e.category] = e._sum.convertedAmount ?? 0;
+  for (const e of monthExpensesRaw) {
+    monthSpendMap[e.category] =
+      (monthSpendMap[e.category] ?? 0) + effectiveAmount(e);
+  }
 
   const budgetWarnings = budgetStatus
     .map((b) => {
@@ -716,15 +753,15 @@ export async function buildWeeklyInsightData(
     total: Math.round(total * 100) / 100,
     count,
     currency: settings?.currency ?? 'INR',
-    topCategory: top?.category ?? null,
-    topCategoryAmount: Math.round((top?._sum.convertedAmount ?? 0) * 100) / 100,
+    topCategory: top ? top[0] : null,
+    topCategoryAmount: top ? Math.round(top[1].amount * 100) / 100 : 0,
     vsLastWeekPct,
     anomalies: anomalyList,
     budgetWarnings,
-    byCategory: sorted.map((r) => ({
-      category: r.category,
-      amount: Math.round((r._sum.convertedAmount ?? 0) * 100) / 100,
-      count: r._count,
+    byCategory: sorted.map(([category, v]) => ({
+      category,
+      amount: Math.round(v.amount * 100) / 100,
+      count: v.count,
     })),
   };
 }
