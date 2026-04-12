@@ -2,7 +2,14 @@ import { z } from 'zod';
 
 // ─── LLM Provider union ───────────────────────────────────────────────────────
 
-export const LLM_PROVIDERS = ['openai', 'gemini', 'groq'] as const;
+export const LLM_PROVIDERS = [
+  'openai',
+  'gemini',
+  'groq',
+  'custom', // Any OpenAI-compatible endpoint configured via CUSTOM_* env vars
+  'vertex', // GCP Vertex AI
+] as const;
+
 export type LlmProvider = (typeof LLM_PROVIDERS)[number];
 
 const envSchema = z.object({
@@ -21,21 +28,34 @@ const envSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
   BCRYPT_ROUNDS: z.coerce.number().min(10).max(14).default(12),
 
-  // ── LLM Provider ─────────────────────────────────────────────────────────
-  /** Which AI provider powers the chat agent. */
+  // ── LLM Provider selection ────────────────────────────────────────────────
   LLM_PROVIDER: z.enum(LLM_PROVIDERS).default('openai'),
 
-  // OpenAI
+  // ── OpenAI ────────────────────────────────────────────────────────────────
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
 
-  // Google Gemini
+  // ── Google Gemini (direct API) ────────────────────────────────────────────
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-1.5-flash'),
 
-  // Groq
+  // ── Groq ──────────────────────────────────────────────────────────────────
   GROQ_API_KEY: z.string().optional(),
   GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
+
+  // ── Custom OpenAI-compatible provider ────────────────────────────────────
+  // Connects to any service that speaks the OpenAI chat completions protocol.
+  // The base URL and key live only in .env — no service name appears in code.
+  CUSTOM_API_KEY: z.string().optional(),
+  CUSTOM_BASE_URL: z.string().url().optional(),
+  CUSTOM_MODEL: z.string().default('gpt-4.1-mini'),
+
+  // ── GCP Vertex AI ─────────────────────────────────────────────────────────
+  VERTEX_PROJECT: z.string().optional(),
+  VERTEX_LOCATION: z.string().default('us-central1'),
+  VERTEX_MODEL: z.string().default('gemini-2.0-flash-001'),
+  // Path to a service-account JSON key file (optional — ADC is used otherwise)
+  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
 
   // ── Server ────────────────────────────────────────────────────────────────
   PORT: z.coerce.number().default(4100),
@@ -83,20 +103,32 @@ function validateEnv() {
 
   const data = result.data;
 
-  // Ensure the active provider's API key is present
-  const providerKeyMap: Record<LlmProvider, string | undefined> = {
-    openai: data.OPENAI_API_KEY,
-    gemini: data.GEMINI_API_KEY,
-    groq: data.GROQ_API_KEY,
+  // Map each provider to the credential that proves it is configured.
+  // For 'vertex' we check the project ID (auth is via ADC, no API key needed).
+  // For 'custom' we check both key and URL.
+  const providerReadyMap: Record<LlmProvider, boolean> = {
+    openai: !!data.OPENAI_API_KEY,
+    gemini: !!data.GEMINI_API_KEY,
+    groq: !!data.GROQ_API_KEY,
+    custom: !!data.CUSTOM_API_KEY && !!data.CUSTOM_BASE_URL,
+    vertex: !!data.VERTEX_PROJECT,
   };
 
-  if (!providerKeyMap[data.LLM_PROVIDER]) {
+  const providerHints: Record<LlmProvider, string> = {
+    openai: 'Set OPENAI_API_KEY in your .env file.',
+    gemini: 'Set GEMINI_API_KEY in your .env file.',
+    groq: 'Set GROQ_API_KEY in your .env file.',
+    custom: 'Set CUSTOM_API_KEY and CUSTOM_BASE_URL in your .env file.',
+    vertex:
+      'Set VERTEX_PROJECT (GCP project ID) in your .env file. ' +
+      'Auth via Application Default Credentials or GOOGLE_APPLICATION_CREDENTIALS.',
+  };
+
+  if (!providerReadyMap[data.LLM_PROVIDER]) {
     console.error(
-      `❌ LLM_PROVIDER is set to "${data.LLM_PROVIDER}" but the corresponding API key is missing.`,
+      `❌ LLM_PROVIDER is set to "${data.LLM_PROVIDER}" but required config is missing.`,
     );
-    console.error(
-      `   Set ${data.LLM_PROVIDER.toUpperCase()}_API_KEY in your .env file.`,
-    );
+    console.error(`   ${providerHints[data.LLM_PROVIDER]}`);
     process.exit(1);
   }
 

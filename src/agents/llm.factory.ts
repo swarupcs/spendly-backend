@@ -5,6 +5,8 @@ import { env, type LlmProvider } from '../config/env';
 import { createOpenAILlm } from './providers/openai.provider';
 import { createGeminiLlm } from './providers/gemini.provider';
 import { createGroqLlm } from './providers/groq.provider';
+import { createCustomLlm } from './providers/custom.provider';
+import { createVertexLlm } from './providers/vertex.provider';
 
 // ─── Tool-bindable LLM type ───────────────────────────────────────────────────
 
@@ -23,6 +25,8 @@ const PROVIDER_REGISTRY: Record<LlmProvider, ProviderFactory> = {
   openai: createOpenAILlm,
   gemini: createGeminiLlm,
   groq: createGroqLlm,
+  custom: createCustomLlm,
+  vertex: createVertexLlm,
 };
 
 // ─── Singleton LLM instance ───────────────────────────────────────────────────
@@ -38,7 +42,8 @@ export function getLlm(): ToolCapableLlm {
 
   if (!factory) {
     throw new Error(
-      `Unknown LLM provider: "${provider}". Valid options: ${Object.keys(PROVIDER_REGISTRY).join(', ')}`,
+      `Unknown LLM provider: "${provider}". ` +
+        `Valid options: ${Object.keys(PROVIDER_REGISTRY).join(', ')}`,
     );
   }
 
@@ -51,33 +56,33 @@ export function getLlm(): ToolCapableLlm {
 // ─── Fallback-aware invocation ────────────────────────────────────────────────
 
 /**
- * Ordered list of fallback providers tried when the primary fails.
- * Primary is always first; others follow in priority order.
+ * Returns providers in priority order for automatic failover.
+ * Primary is always first; the rest are included only when their
+ * required credentials are present in the environment.
  */
 function getFallbackOrder(): LlmProvider[] {
   const primary = env.LLM_PROVIDER;
-  const all: LlmProvider[] = ['openai', 'gemini', 'groq'];
-  // Primary first, then others that have an API key configured
-  return [
-    primary,
-    ...all.filter((p) => {
-      if (p === primary) return false;
-      const keyMap: Record<LlmProvider, string | undefined> = {
-        openai: env.OPENAI_API_KEY,
-        gemini: env.GEMINI_API_KEY,
-        groq: env.GROQ_API_KEY,
-      };
-      return !!keyMap[p];
-    }),
-  ];
+  const all: LlmProvider[] = ['openai', 'gemini', 'groq', 'custom', 'vertex'];
+
+  // Determine which providers are configured
+  const isReady: Record<LlmProvider, boolean> = {
+    openai: !!env.OPENAI_API_KEY,
+    gemini: !!env.GEMINI_API_KEY,
+    groq: !!env.GROQ_API_KEY,
+    custom: !!env.CUSTOM_API_KEY && !!env.CUSTOM_BASE_URL,
+    vertex: !!env.VERTEX_PROJECT,
+  };
+
+  return [primary, ...all.filter((p) => p !== primary && isReady[p])];
 }
 
 /**
  * Invoke the LLM with automatic failover to the next available provider.
- * Falls back silently — logs a warning but never throws if at least one
+ * Logs a warning when falling back but never throws if at least one
  * provider succeeds.
  *
- * Usage: instead of `llm.invoke(messages)`, use `invokeLlmWithFallback(messages)`.
+ * Usage: replace direct `llm.invoke(messages)` calls with this function
+ * wherever resilience matters (e.g. onboarding, receipt parsing).
  */
 export async function invokeLlmWithFallback(
   messages: Parameters<ToolCapableLlm['invoke']>[0],
@@ -88,15 +93,20 @@ export async function invokeLlmWithFallback(
 
   for (const provider of order) {
     const factory = PROVIDER_REGISTRY[provider];
-    const keyMap: Record<LlmProvider, string | undefined> = {
-      openai: env.OPENAI_API_KEY,
-      gemini: env.GEMINI_API_KEY,
-      groq: env.GROQ_API_KEY,
+
+    const isReady: Record<LlmProvider, boolean> = {
+      openai: !!env.OPENAI_API_KEY,
+      gemini: !!env.GEMINI_API_KEY,
+      groq: !!env.GROQ_API_KEY,
+      custom: !!env.CUSTOM_API_KEY && !!env.CUSTOM_BASE_URL,
+      vertex: !!env.VERTEX_PROJECT,
     };
-    if (!factory || !keyMap[provider]) continue;
+
+    if (!factory || !isReady[provider]) continue;
 
     try {
-      // Use cached instance for primary provider, create fresh for fallbacks
+      // Reuse the cached singleton for the primary; create a fresh instance
+      // for fallback providers so the singleton is never replaced.
       const llm = provider === env.LLM_PROVIDER ? getLlm() : factory();
 
       if (provider !== env.LLM_PROVIDER) {
@@ -105,8 +115,7 @@ export async function invokeLlmWithFallback(
         );
       }
 
-      const result = await llm.invoke(messages, options);
-      return result;
+      return await llm.invoke(messages, options);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       console.error(
@@ -126,6 +135,8 @@ export function getLlmProviderInfo(): { provider: LlmProvider; model: string } {
     openai: env.OPENAI_MODEL,
     gemini: env.GEMINI_MODEL,
     groq: env.GROQ_MODEL,
+    custom: env.CUSTOM_MODEL,
+    vertex: env.VERTEX_MODEL,
   };
 
   return {
