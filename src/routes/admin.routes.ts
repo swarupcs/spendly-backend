@@ -8,6 +8,7 @@ export const adminRouter: Router = Router();
 adminRouter.use(authenticate, requireAdmin);
 
 adminRouter.get('/users', AdminController.getUsers);
+adminRouter.get('/users/:id', AdminController.getUserDetails);
 adminRouter.get('/settings', AdminController.getGlobalSettings);
 adminRouter.post('/settings', AdminController.updateGlobalSettings);
 adminRouter.post('/users/:id/settings', AdminController.updateUserSettings);

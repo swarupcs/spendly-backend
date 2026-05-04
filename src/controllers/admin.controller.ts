@@ -2,6 +2,49 @@ import type { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { env } from '../config/env';
 
+export async function getUserDetails(req: Request, res: Response) {
+  try {
+    const userId = parseInt(req.params.id as string, 10);
+    if (isNaN(userId)) {
+      return res.status(400).json({ success: false, error: 'Invalid user ID' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        settings: true,
+        expenses: {
+          orderBy: { date: 'desc' },
+          take: 50
+        },
+        chatMessages: {
+          orderBy: { createdAt: 'desc' },
+          take: 100
+        },
+        toolCallLogs: {
+          orderBy: { createdAt: 'desc' },
+          take: 100
+        },
+        _count: {
+          select: {
+            expenses: true,
+            chatMessages: true,
+            toolCallLogs: true
+          }
+        }
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    res.json({ success: true, data: user });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+}
+
 export async function getUsers(req: Request, res: Response) {
   try {
     const users = await prisma.user.findMany({
