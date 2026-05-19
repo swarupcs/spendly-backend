@@ -7,6 +7,7 @@ import {
   streamChat,
   getChatHistory,
   deleteChatHistory,
+  listThreads,
 } from '../controllers/chat.controller';
 
 export const chatRouter: Router = Router();
@@ -15,5 +16,6 @@ export const chatRouter: Router = Router();
 chatRouter.use(authenticate);
 
 chatRouter.post('/', chatLimiter, validate(chatQuerySchema), streamChat);
+chatRouter.get('/threads', listThreads);
 chatRouter.get('/history', getChatHistory);
 chatRouter.delete('/history', deleteChatHistory);

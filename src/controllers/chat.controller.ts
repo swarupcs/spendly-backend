@@ -8,6 +8,7 @@ import {
   persistAssistantMessage,
   getChatHistoryService,
   deleteChatHistoryService,
+  listThreadsService,
 } from '../services/chat.service';
 import { AppError } from '../middleware/errorHandler';
 
@@ -178,6 +179,22 @@ export async function deleteChatHistory(
       : undefined;
     const count = await deleteChatHistoryService(userId, scopedThreadId);
     res.json({ success: true, message: `${count} message(s) deleted` });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── GET /api/chat/threads ────────────────────────────────────────────────────
+
+export async function listThreads(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = (req as AuthenticatedRequest).user.sub;
+    const threads = await listThreadsService(userId);
+    res.json({ success: true, data: threads });
   } catch (err) {
     next(err);
   }
