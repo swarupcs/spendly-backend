@@ -41,6 +41,7 @@ model User {
   subscription       Subscription?
   toolCallLogs       ToolCallLog[]
   merchantRules      MerchantRule[]
+  anomalyAlerts      AnomalyAlert[]
 
   @@map("users")
 }
@@ -251,6 +252,24 @@ model MerchantRule {
   @@index([userId])
   @@index([userId, merchant])
   @@map("merchant_rules")
+}
+
+// AI Anomaly Detection (Phase 2.3)
+model AnomalyAlert {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  category    Category
+  amount      Float
+  expectedAvg Float
+  percentage  Float
+  explanation String?
+  isDismissed Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("anomaly_alerts")
 }
 
 enum Plan {
