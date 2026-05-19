@@ -187,6 +187,34 @@ export async function createExpenseService(
     date: expense.date,
   }).catch((err) => console.error('Alert error:', err));
 
+  // Auto-categorization Phase 2.5: Save Merchant Rule
+  if (expense.merchant) {
+    try {
+      // @ts-ignore
+      await prisma.merchantRule.upsert({
+        where: {
+          userId_merchant: {
+            userId,
+            merchant: expense.merchant,
+          },
+        },
+        create: {
+          userId,
+          merchant: expense.merchant,
+          title: expense.title,
+          category: expense.category,
+          hitCount: 1,
+        },
+        update: {
+          category: expense.category,
+          hitCount: { increment: 1 },
+        },
+      });
+    } catch (err) {
+      console.error('Failed to save merchant rule:', err);
+    }
+  }
+
   return expense;
 }
 
@@ -237,7 +265,36 @@ export async function updateExpenseService(
       inputAny['isTaxDeductible'];
   }
 
-  return prisma.expense.update({ where: { id }, data: updateData });
+  const updatedExpense = await prisma.expense.update({ where: { id }, data: updateData });
+
+  // Auto-categorization Phase 2.5: Update Merchant Rule
+  if (updatedExpense.merchant) {
+    try {
+      // @ts-ignore
+      await prisma.merchantRule.upsert({
+        where: {
+          userId_merchant: {
+            userId,
+            merchant: updatedExpense.merchant,
+          },
+        },
+        create: {
+          userId,
+          merchant: updatedExpense.merchant,
+          category: updatedExpense.category,
+          hitCount: 1,
+        },
+        update: {
+          category: updatedExpense.category,
+          hitCount: { increment: 1 },
+        },
+      });
+    } catch (err) {
+      console.error('Failed to update merchant rule:', err);
+    }
+  }
+
+  return updatedExpense;
 }
 
 // ─── Delete One ───────────────────────────────────────────────────────────────

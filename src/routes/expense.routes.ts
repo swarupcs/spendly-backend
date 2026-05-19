@@ -16,6 +16,7 @@ import {
   deleteExpense,
   bulkDeleteExpenses,
   exportExpenses,
+  suggestCategory,
 } from '../controllers/expense.controller';
 
 export const expenseRouter: Router = Router();
@@ -27,6 +28,7 @@ expenseRouter.use(authenticate);
 expenseRouter.get('/', validate(expenseFiltersSchema, 'query'), listExpenses);
 expenseRouter.get('/stats', getStats);
 expenseRouter.get('/export', exportExpenses);
+expenseRouter.post('/suggest-category', suggestCategory);
 expenseRouter.post('/', validate(createExpenseSchema), createExpense);
 expenseRouter.delete('/', validate(bulkDeleteSchema), bulkDeleteExpenses);
 

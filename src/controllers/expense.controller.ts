@@ -16,6 +16,7 @@ import {
   bulkDeleteExpensesService,
   exportExpensesService,
 } from '../services/expense.service';
+import { suggestCategoryService } from '../services/categorization.service';
 
 // ─── GET /api/expenses ────────────────────────────────────────────────────────
 
@@ -203,6 +204,29 @@ export async function bulkDeleteExpenses(
       message: `${count} expense(s) deleted`,
       data: { count },
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/expenses/suggest-category ──────────────────────────────────────
+
+export async function suggestCategory(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = (req as AuthenticatedRequest).user.sub;
+    const { title, merchant } = req.body as { title: string; merchant?: string };
+    
+    if (!title && !merchant) {
+      res.status(400).json({ success: false, error: 'Title or merchant is required' });
+      return;
+    }
+
+    const suggestion = await suggestCategoryService(userId, { title, merchant });
+    res.json({ success: true, data: suggestion });
   } catch (err) {
     next(err);
   }

@@ -40,6 +40,7 @@ model User {
   alertLogs          AlertLog[]
   subscription       Subscription?
   toolCallLogs       ToolCallLog[]
+  merchantRules      MerchantRule[]
 
   @@map("users")
 }
@@ -234,6 +235,24 @@ model ToolCallLog {
   @@map("tool_call_logs")
 }
 
+// Expense auto-categorization (Phase 2.5)
+model MerchantRule {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  merchant  String
+  title     String?
+  category  Category
+  hitCount  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, merchant])
+  @@index([userId])
+  @@index([userId, merchant])
+  @@map("merchant_rules")
+}
+
 enum Plan {
   FREE
   PRO
@@ -273,3 +292,4 @@ enum Category {
   EDUCATION
   OTHER
 }
+
