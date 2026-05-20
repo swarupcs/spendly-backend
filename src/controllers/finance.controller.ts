@@ -7,6 +7,7 @@ import {
   applyZeroBasedBudget,
   getTaxSummary,
   getTopMerchants,
+  getCashFlowForecast,
 } from '../services/finance.service';
 import {
   getToolCallStats,
@@ -186,6 +187,24 @@ export async function getToolLog(
       ? parseInt(req.query.limit as string, 10)
       : 20;
     const data = await getRecentToolCalls(userId, limit);
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── GET /api/finance/forecast ────────────────────────────────────────────────
+
+export async function getCashFlowForecastController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = (req as AuthenticatedRequest).user.sub;
+    const months = req.query.months ? parseInt(req.query.months as string, 10) : 3;
+
+    const data = await getCashFlowForecast(userId, months);
     res.json({ success: true, data });
   } catch (err) {
     next(err);

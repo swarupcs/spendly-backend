@@ -9,11 +9,15 @@ import {
   getTopMerchantsController,
   getToolStats,
   getToolLog,
+  getCashFlowForecastController,
 } from '../controllers/finance.controller';
 
 export const financeRouter: Router = Router();
 
 financeRouter.use(authenticate);
+
+// Cash flow forecasting
+financeRouter.get('/forecast', getCashFlowForecastController);
 
 // Net worth
 financeRouter.get('/net-worth', getNetWorth);

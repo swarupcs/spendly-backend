@@ -449,3 +449,134 @@ export async function getTopMerchants(
     .sort((a, b) => b.totalSpent - a.totalSpent)
     .slice(0, limit);
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// CASH FLOW FORECASTING
+// ═══════════════════════════════════════════════════════════════════
+
+export interface ForecastResult {
+  month: string; // YYYY-MM
+  income: number;
+  predictedExpenses: number;
+  recurringExpenses: number;
+  variableExpenses: number;
+  netCashFlow: number;
+  isForecast: boolean;
+}
+
+export async function getCashFlowForecast(
+  userId: number,
+  months: number = 3,
+): Promise<ForecastResult[]> {
+  const settings = await prisma.userSettings.findUnique({ where: { userId } });
+  // @ts-ignore
+  const income = settings?.monthlyIncome ?? 0;
+
+  // Get past 6 months of expenses
+  const now = new Date();
+  const pastMonths: string[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    pastMonths.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+
+  const startDate = `${pastMonths[0]}-01`;
+  const endDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-31`;
+
+  const pastExpenses = await prisma.expense.groupBy({
+    by: ['date'],
+    where: { userId, date: { gte: startDate, lte: endDate } },
+    _sum: { convertedAmount: true },
+  });
+
+  // Group by month
+  const monthlySpend: Record<string, number> = {};
+  for (const m of pastMonths) monthlySpend[m] = 0;
+
+  for (const row of pastExpenses) {
+    const month = row.date.substring(0, 7); // YYYY-MM
+    if (monthlySpend[month] !== undefined) {
+      monthlySpend[month] += row._sum.convertedAmount ?? 0;
+    }
+  }
+
+  // Simple Linear Regression: y = mx + b
+  const xVals = Array.from({ length: pastMonths.length }, (_, i) => i);
+  const yVals = pastMonths.map(m => monthlySpend[m]);
+
+  const n = xVals.length;
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    sumX += xVals[i];
+    sumY += yVals[i];
+    sumXY += xVals[i] * yVals[i];
+    sumXX += xVals[i] * xVals[i];
+  }
+
+  const denominator = n * sumXX - sumX * sumX;
+  let slope = 0;
+  let intercept = sumY / n;
+  
+  if (denominator !== 0) {
+    slope = (n * sumXY - sumX * sumY) / denominator;
+    intercept = (sumY - slope * sumX) / n;
+  }
+
+  // Predict future months
+  const recurring = await prisma.recurringExpense.findMany({
+    where: { userId, isActive: true },
+  });
+
+  // Calculate monthly recurring total
+  let recurringTotal = 0;
+  for (const r of recurring) {
+    if (r.frequency === 'MONTHLY') recurringTotal += r.amount;
+    else if (r.frequency === 'WEEKLY') recurringTotal += r.amount * 4.33;
+    else if (r.frequency === 'DAILY') recurringTotal += r.amount * 30;
+    else if (r.frequency === 'YEARLY') recurringTotal += r.amount / 12;
+  }
+
+  const results: ForecastResult[] = [];
+
+  // Add past months as historical context
+  for (let i = 0; i < pastMonths.length; i++) {
+    const expenses = Math.round(yVals[i] * 100) / 100;
+    results.push({
+      month: pastMonths[i],
+      income,
+      predictedExpenses: expenses,
+      recurringExpenses: recurringTotal,
+      variableExpenses: Math.max(0, expenses - recurringTotal),
+      netCashFlow: income - expenses,
+      isForecast: false,
+    });
+  }
+
+  // Predict future months
+  for (let i = 1; i <= months; i++) {
+    const futureDate = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const monthStr = `${futureDate.getFullYear()}-${String(futureDate.getMonth() + 1).padStart(2, '0')}`;
+    const x = n - 1 + i;
+    
+    // Regression predicts total variable + some recurring. We'll adjust it slightly
+    // Let's assume the linear regression predicts the total expenses.
+    let predicted = slope * x + intercept;
+    
+    // Safety boundary: don't predict negative expenses
+    if (predicted < recurringTotal) predicted = recurringTotal * 1.1;
+
+    predicted = Math.round(predicted * 100) / 100;
+    
+    results.push({
+      month: monthStr,
+      income,
+      predictedExpenses: predicted,
+      recurringExpenses: Math.round(recurringTotal * 100) / 100,
+      variableExpenses: Math.max(0, Math.round((predicted - recurringTotal) * 100) / 100),
+      netCashFlow: Math.round((income - predicted) * 100) / 100,
+      isForecast: true,
+    });
+  }
+
+  return results;
+}
