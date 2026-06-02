@@ -24,11 +24,6 @@ export async function getNetWorthSnapshot(
   const [settings, goals] = await Promise.all([
     prisma.userSettings.findUnique({
       where: { userId },
-      select: {
-        // These fields require the schema migration in SCHEMA_ADDITIONS.prisma
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ...(true as any), // bypass TS until migration is applied
-      },
     }),
     prisma.financialGoal.findMany({
       where: { userId, type: 'SAVINGS' },
