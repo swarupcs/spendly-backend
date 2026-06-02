@@ -133,7 +133,9 @@ export async function streamChat(
         payload: { text: 'An error occurred. Please try again.' },
       });
     }
-    next(err);
+    // Do NOT call next(err) here — SSE headers are already committed.
+    // Calling next(err) would cause the global error handler to attempt
+    // res.json() on an already-sent response, producing a "Cannot set headers" error.
   } finally {
     res.end();
   }

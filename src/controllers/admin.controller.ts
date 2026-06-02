@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { env } from '../config/env';
+import { clearAgentCache } from '../agents/index';
 
 export async function getUserDetails(req: Request, res: Response) {
   try {
@@ -107,6 +108,8 @@ export async function updateGlobalSettings(req: Request, res: Response) {
         data: { llmProvider, llmModel }
       });
     }
+    // Global LLM change affects all users — clear the entire agent cache
+    clearAgentCache();
     res.json({ success: true, data: settings });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -123,7 +126,8 @@ export async function updateUserSettings(req: Request, res: Response) {
       update: { llmProvider, llmModel },
       create: { userId, llmProvider, llmModel }
     });
-    
+    // Clear cached agent so the next request uses the new model
+    clearAgentCache();
     res.json({ success: true, data: settings });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });

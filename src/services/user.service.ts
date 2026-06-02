@@ -1,5 +1,6 @@
 import { prisma } from '../config/db';
 import type { UpdateUserSettingsInput, UpdateProfileInput } from '../lib/schemas';
+import { clearAgentCache } from '../agents/index';
 
 const SETTINGS_SELECT = {
   emailNotifications: true,
@@ -8,6 +9,8 @@ const SETTINGS_SELECT = {
   onboardingCompleted: true,
   currency: true,
   alertThreshold: true,
+  llmProvider: true,
+  llmModel: true,
 } as const;
 
 // ─── Update Profile ───────────────────────────────────────────────────────────
@@ -58,10 +61,18 @@ export async function updateUserSettingsService(
   userId: number,
   input: UpdateUserSettingsInput,
 ) {
-  return prisma.userSettings.upsert({
+  const result = await prisma.userSettings.upsert({
     where: { userId },
     create: { userId, ...input },
     update: input,
     select: SETTINGS_SELECT,
   });
+
+  // If LLM provider/model changed, the cached agent has the old LLM instance.
+  // Clear the cache so the next request builds a fresh agent with the new model.
+  if (input.llmProvider !== undefined || input.llmModel !== undefined) {
+    clearAgentCache();
+  }
+
+  return result;
 }

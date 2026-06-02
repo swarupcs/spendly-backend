@@ -183,6 +183,8 @@ export const updateUserSettingsSchema = z.object({
   monthlyIncome: z.number().positive().max(100_000_000).optional(),
   netWorthAssets: z.number().min(0).max(100_000_000_000).optional(),
   netWorthLiabilities: z.number().min(0).max(100_000_000_000).optional(),
+  llmProvider: z.string().max(50).optional(),
+  llmModel: z.string().max(100).optional(),
 });
 
 // ─── Recurring Expense Schemas ────────────────────────────────────────────────

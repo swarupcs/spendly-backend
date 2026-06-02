@@ -8,13 +8,13 @@ import type { ToolCapableLlm } from '../llm.factory';
  *
  * Install: npm install @langchain/google-genai
  */
-export function createGeminiLlm(): ToolCapableLlm {
+export function createGeminiLlm(model?: string): ToolCapableLlm {
   if (!env.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is not set');
   }
 
   return new ChatGoogleGenerativeAI({
-    model: env.GEMINI_MODEL,
+    model: model || env.GEMINI_MODEL,
     apiKey: env.GEMINI_API_KEY,
     temperature: 0.2,
     maxRetries: 2,

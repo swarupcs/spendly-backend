@@ -8,13 +8,13 @@ import type { ToolCapableLlm } from '../llm.factory';
  *
  * Install: npm install @langchain/groq
  */
-export function createGroqLlm(): ToolCapableLlm {
+export function createGroqLlm(model?: string): ToolCapableLlm {
   if (!env.GROQ_API_KEY) {
     throw new Error('GROQ_API_KEY is not set');
   }
 
   return new ChatGroq({
-    model: env.GROQ_MODEL,
+    model: model || env.GROQ_MODEL,
     apiKey: env.GROQ_API_KEY,
     temperature: 0.2,
     maxRetries: 2,

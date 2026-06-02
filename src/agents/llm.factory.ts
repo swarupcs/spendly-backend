@@ -20,7 +20,7 @@ export type ToolCapableLlm = BaseChatModel & {
 
 // ─── Provider registry ────────────────────────────────────────────────────────
 
-type ProviderFactory = () => ToolCapableLlm;
+type ProviderFactory = (model?: string) => ToolCapableLlm;
 
 const PROVIDER_REGISTRY: Record<LlmProvider, ProviderFactory> = {
   openai: createOpenAILlm,
@@ -77,12 +77,8 @@ export async function getLlm(userId?: number): Promise<ToolCapableLlm> {
     );
   }
 
-  // We are creating a fresh instance here to ensure it uses the correct 
-  // provider/model if we decide to pass model overrides to factory later.
-  // Note: Current factories read from `env`, so for true dynamic model switching
-  // the factories would need to be updated to accept `model` as an argument.
-  // For now, we at least switch the *provider* based on the DB settings.
-  return factory();
+  // Pass the DB-resolved model so user/global settings take full effect.
+  return factory(info.model || undefined);
 }
 
 // ─── Fallback-aware invocation ────────────────────────────────────────────────
@@ -124,7 +120,10 @@ export async function invokeLlmWithFallback(
     if (!factory || !isReady[provider]) continue;
 
     try {
-      const llm = factory();
+      // For the primary provider, use the DB-resolved model; fallbacks use their env defaults.
+      const resolvedModel =
+        provider === primaryProvider ? (await getLlmProviderInfo(userId)).model : undefined;
+      const llm = factory(resolvedModel || undefined);
       if (provider !== primaryProvider) {
         console.warn(`⚠️  Primary LLM failed — falling back to ${provider.toUpperCase()}`);
       }

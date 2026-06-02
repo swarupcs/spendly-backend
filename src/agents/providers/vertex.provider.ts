@@ -30,7 +30,7 @@ import type { ToolCapableLlm } from '../llm.factory';
  *   pnpm add @langchain/google-vertexai@0.1.8
  *   # or: npm install @langchain/google-vertexai@0.1.8
  */
-export function createVertexLlm(): ToolCapableLlm {
+export function createVertexLlm(model?: string): ToolCapableLlm {
   if (!env.VERTEX_PROJECT) {
     throw new Error(
       'VERTEX_PROJECT is not set. ' +
@@ -39,7 +39,7 @@ export function createVertexLlm(): ToolCapableLlm {
   }
 
   return new ChatVertexAI({
-    model: env.VERTEX_MODEL,
+    model: model || env.VERTEX_MODEL,
     // `location` is a direct field on GoogleConnectionParams
     location: env.VERTEX_LOCATION,
     // `project` is NOT a top-level field — pass it inside authOptions.projectId

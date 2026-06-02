@@ -6,13 +6,13 @@ import type { ToolCapableLlm } from '../llm.factory';
  * Returns a ChatOpenAI instance configured from env.
  * Models: gpt-4o, gpt-4o-mini, gpt-4-turbo, etc.
  */
-export function createOpenAILlm(): ToolCapableLlm {
+export function createOpenAILlm(model?: string): ToolCapableLlm {
   if (!env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY is not set');
   }
 
   return new ChatOpenAI({
-    model: env.OPENAI_MODEL,
+    model: model || env.OPENAI_MODEL,
     apiKey: env.OPENAI_API_KEY,
     temperature: 0.2,
     maxRetries: 2,
