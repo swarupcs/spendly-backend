@@ -39,7 +39,30 @@ async function compatFetch(
         }
       }
 
-
+      if (Array.isArray(body.messages)) {
+        body.messages = body.messages.map((msg: any) => {
+          // Euron rejects tool_calls in history. Convert to text.
+          if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
+            const calls = msg.tool_calls.map((tc: any) => 
+              `${tc.function?.name || 'unknown'}(${tc.function?.arguments || ''})`
+            ).join(', ');
+            
+            return {
+              role: 'assistant',
+              content: msg.content ? `${msg.content}\n[Tool Calls: ${calls}]` : `[Tool Calls: ${calls}]`
+            };
+          }
+          // Euron rejects the 'tool' role. Convert to a user message.
+          if (msg.role === 'tool') {
+            return {
+              role: 'user',
+              content: `[Tool Result for ${msg.name || msg.tool_call_id || 'tool'}]: ${msg.content}`
+            };
+          }
+          return msg;
+        });
+        modified = true;
+      }
 
       if (modified) {
         init = { ...init, body: JSON.stringify(body) };
