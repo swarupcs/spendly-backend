@@ -49,14 +49,16 @@ async function compatFetch(
             
             return {
               role: 'assistant',
-              content: msg.content ? `${msg.content}\n[Tool Calls: ${calls}]` : `[Tool Calls: ${calls}]`
+              content: msg.content 
+                ? `${msg.content}\n\n[PAST_ACTION: Invoked ${calls}]` 
+                : `[PAST_ACTION: Invoked ${calls}]`
             };
           }
           // Euron rejects the 'tool' role. Convert to a user message.
           if (msg.role === 'tool') {
             return {
               role: 'user',
-              content: `[Tool Result for ${msg.name || msg.tool_call_id || 'tool'}]: ${msg.content}`
+              content: `[ACTION_RESULT for ${msg.name || msg.tool_call_id || 'tool'}]: ${msg.content}\n\n(System Note to Assistant: The above is a log of a past tool execution. For any future actions, you must use the standard native JSON tool calling format. Do not type out [PAST_ACTION] or [ACTION_RESULT] yourself.)`
             };
           }
           return msg;
