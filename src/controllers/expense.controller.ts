@@ -17,6 +17,8 @@ import {
   exportExpensesService,
 } from '../services/expense.service';
 import { suggestCategoryService } from '../services/categorization.service';
+import { prisma } from '../config/db';
+import { sendOnDemandExpenseReportEmail } from '../lib/email';
 
 // ─── GET /api/expenses ────────────────────────────────────────────────────────
 
@@ -243,7 +245,6 @@ export async function emailExpenseReport(
     const userId = (req as AuthenticatedRequest).user.sub;
     
     // Get the user's details (email, name, currency)
-    const { prisma } = await import('../config/db');
     const [user, settings] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId }, select: { email: true, name: true } }),
       prisma.userSettings.findUnique({ where: { userId }, select: { currency: true } })
@@ -264,8 +265,6 @@ export async function emailExpenseReport(
     const total = expenses.reduce((sum, e) => sum + e.convertedAmount, 0);
     const count = expenses.length;
     const currency = settings?.currency ?? 'INR';
-
-    const { sendOnDemandExpenseReportEmail } = await import('../lib/email');
     
     await sendOnDemandExpenseReportEmail(user.email, user.name, {
       total,
