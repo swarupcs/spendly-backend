@@ -453,3 +453,83 @@ export async function sendMonthlySummaryEmail(
     console.error('sendMonthlySummaryEmail error:', err);
   }
 }
+
+// ─── Send On-Demand Expense Report Email ──────────────────────────────────────
+
+export interface OnDemandReportData {
+  total: number;
+  count: number;
+  currency: string;
+  expenses: Array<{ title: string; amount: number; category: string; date: string; merchant?: string | null }>;
+}
+
+export async function sendOnDemandExpenseReportEmail(
+  to: string,
+  name: string,
+  data: OnDemandReportData,
+): Promise<void> {
+  try {
+    const expenseRows = data.expenses
+      .map((e) => {
+        const emoji = CATEGORY_EMOJI[e.category] ?? '📦';
+        const dateStr = new Date(e.date).toLocaleDateString();
+        return `
+        <tr>
+          <td style="padding:10px 0;border-bottom:1px solid rgba(124,92,252,0.08);">
+            <div style="font-size:13px;color:#f0efff;font-weight:600;">${e.title}</div>
+            <div style="font-size:11px;color:#4a4870;margin-top:4px;">${emoji} ${e.category} &bull; ${dateStr}${e.merchant ? ` &bull; ${e.merchant}` : ''}</div>
+          </td>
+          <td style="padding:10px 0;font-size:14px;color:#9d7fff;text-align:right;font-weight:600;border-bottom:1px solid rgba(124,92,252,0.08);">
+            ${fmtEmail(e.amount, data.currency)}
+          </td>
+        </tr>`;
+      })
+      .join('');
+
+    const expensesUrl = `${env.FRONTEND_URL}/expenses`;
+
+    const content = `
+    <h1 style="font-size:22px;font-weight:800;color:#f0efff;margin:0 0 8px;letter-spacing:-0.5px;">
+      📄 Your Expense Report
+    </h1>
+    <p style="font-size:14px;color:#8b89b0;margin:0 0 24px;line-height:1.6;">
+      Hi ${name}, here is the expense report you requested.
+    </p>
+
+    <div style="background:rgba(8,8,16,0.8);border:1px solid rgba(124,92,252,0.15);border-radius:14px;padding:20px;margin-bottom:24px;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <div>
+          <p style="font-size:12px;color:#4a4870;font-family:monospace;text-transform:uppercase;letter-spacing:1px;margin:0 0 4px;">Total Spent</p>
+          <p style="font-size:24px;font-weight:900;color:#7c5cfc;margin:0;letter-spacing:-1px;">${fmtEmail(data.total, data.currency)}</p>
+        </div>
+        <div style="text-align:right;">
+          <p style="font-size:12px;color:#4a4870;font-family:monospace;text-transform:uppercase;letter-spacing:1px;margin:0 0 4px;">Transactions</p>
+          <p style="font-size:24px;font-weight:900;color:#00d4ff;margin:0;">${data.count}</p>
+        </div>
+      </div>
+    </div>
+
+    ${data.expenses.length > 0 ? `
+    <div style="background:rgba(8,8,16,0.8);border:1px solid rgba(124,92,252,0.15);border-radius:14px;padding:20px;margin-bottom:24px;">
+      <p style="font-size:11px;color:#4a4870;font-family:monospace;text-transform:uppercase;letter-spacing:2px;margin:0 0 14px;">Recent Expenses</p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${expenseRows}
+      </table>
+    </div>` : ''}
+
+    <a href="${expensesUrl}" style="display:block;text-align:center;background:linear-gradient(135deg,#7c5cfc,#00d4ff);color:#fff;font-weight:700;font-size:15px;padding:14px 24px;border-radius:12px;text-decoration:none;letter-spacing:0.2px;">
+      View All Expenses
+    </a>`;
+
+    await resend.emails.send({
+      from: env.EMAIL_FROM,
+      to,
+      subject: '📄 Your requested expense report',
+      html: baseHtml(content),
+    });
+  } catch (err) {
+    console.error('sendOnDemandExpenseReportEmail error:', err);
+    throw err;
+  }
+}
+

@@ -231,3 +231,58 @@ export async function suggestCategory(
     next(err);
   }
 }
+
+// ─── POST /api/expenses/email-report ──────────────────────────────────────────
+
+export async function emailExpenseReport(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = (req as AuthenticatedRequest).user.sub;
+    
+    // Get the user's details (email, name, currency)
+    const { prisma } = await import('../config/db');
+    const [user, settings] = await Promise.all([
+      prisma.user.findUnique({ where: { id: userId }, select: { email: true, name: true } }),
+      prisma.userSettings.findUnique({ where: { userId }, select: { currency: true } })
+    ]);
+    
+    if (!user) {
+      res.status(404).json({ success: false, error: 'User not found' });
+      return;
+    }
+
+    // Default to current month if no dates provided
+    const now = new Date();
+    const defaultFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const { from = defaultFrom, to } = req.body as { from?: string; to?: string };
+
+    const expenses = await exportExpensesService(userId, { from, to });
+    
+    const total = expenses.reduce((sum, e) => sum + e.convertedAmount, 0);
+    const count = expenses.length;
+    const currency = settings?.currency ?? 'INR';
+
+    const { sendOnDemandExpenseReportEmail } = await import('../lib/email');
+    
+    await sendOnDemandExpenseReportEmail(user.email, user.name, {
+      total,
+      count,
+      currency,
+      expenses: expenses.map(e => ({
+        title: e.title,
+        amount: e.convertedAmount,
+        category: e.category,
+        date: e.date,
+        merchant: (e as any).merchant // cast to any since merchant might not be strongly typed in the returned expense if it's new
+      }))
+    });
+
+    res.json({ success: true, message: 'Expense report sent successfully' });
+  } catch (err) {
+    next(err);
+  }
+}
+
